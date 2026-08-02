@@ -1,0 +1,26 @@
+name = "MeshVoronoi"
+uuid = "610501a2-07a5-464b-83bf-c8cecd7cc972"
+version = "0.1.0"
+authors = ["Joel Sjögren"]
+
+[deps]
+GLFW = "f7f18e0c-5ee9-5ccd-a5bf-e8befd85ed98"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+GeometryBasics = "5c1252a2-5f33-56bf-86c9-59e7332b4326"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+ModernGL = "66fc600b-dfda-50eb-8b99-91cfa97b1301"
+Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+GLFW = "3.4.6"
+HTTP = "2.5.5"
+ModernGL = "1.1.8"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

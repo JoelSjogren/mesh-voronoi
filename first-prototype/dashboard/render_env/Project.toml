@@ -1,0 +1,4 @@
+[deps]
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+MeshVoronoi = "9c1a8b2e-4d3f-4a7b-9e6c-2f8d5a1b3c7e"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"

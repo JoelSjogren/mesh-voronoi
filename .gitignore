@@ -1,0 +1,4 @@
+Manifest.toml
+*.log
+.DS_Store
+.claude/settings.local.json

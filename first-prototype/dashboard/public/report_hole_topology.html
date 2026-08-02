@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi-nd &mdash; a cell's territory can have a hole</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 900px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .step {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .step img {
+    width: 340px;
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+  }
+  .step .desc { flex: 1; min-width: 260px; }
+  .step .desc h3 { margin-top: 0; font-size: 1rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  pre {
+    background: color-mix(in srgb, var(--bad) 8%, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>mesh-voronoi-nd &mdash; a cell's territory can have a hole (task #39)</h1>
+  <div class="sub">One-off investigation report, generated from a live run of the actual construction code (not a mockup) &mdash; see the live dashboard for ongoing test status.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">fixed</span> the construction now supports multiply-connected cells</h2>
+    <p>
+      Found by a random stress test built while chasing a different bug (task #51): inserting a
+      second, crossing segment near an existing arrangement of points reliably produced
+      <code>"cyclic_boundary_walk: boundary edges don't form a simple cycle"</code>, a hard crash deep
+      inside construction. Root cause: one point's own remaining Voronoi territory can end up
+      <strong>entirely enclosed</strong> inside a segment's own dominance region &mdash; a genuine
+      hole, not a bug in the sense of corrupted data. <code>cyclic_boundary_walk</code> assumed every
+      cell's own boundary was exactly one simple closed loop of edges; a cell with a hole has that
+      loop <em>plus</em> a second, entirely disjoint one (the hole's own boundary), and the walk had
+      no way to notice and simply gave up partway through.
+    </p>
+    <p>
+      Fixed by generalizing the walk (now <code>cyclic_boundary_walks</code>, plural) to decompose a
+      cell's edges into <em>all</em> of its simple cycles instead of assuming one, and teaching the
+      clip routine that builds new cells (<code>clip_top_cell_2d!</code>) to treat every loop but the
+      largest (by bounding-box area) as a hole: carried through unchanged and reattached to whichever
+      resulting piece geometrically contains it, rather than reprocessed for crossings &mdash; a
+      hole's own splitting, if the new bisector actually reaches it, is already being discovered
+      independently by whichever cell that hole itself belongs to, since every live cell is clipped
+      against the same new bisector on its own.
+    </p>
+    <p>
+      Verified against the exact repro below (full trace, not just "it doesn't crash"), plus the whole
+      test suite (26,505 tests) and a 60-trial randomized stress test of two-segment arrangements: zero
+      <code>cyclic_boundary_walk</code> failures remain, versus every one of those trials hitting it
+      before the fix.
+    </p>
+    <p>
+      <span class="badge bad">still open, lower stakes</span> <code>polygon_vertices_2d</code> (used
+      only for rendering, e.g. the plain-fill images on this very page) is a separate copy of the same
+      single-loop walk and has the identical gap &mdash; a cell with a hole still can't be tessellated
+      for display. Not fixed here, for the same reason <code>tessellate_curve</code> wasn't fixed
+      alongside task #43's own construction-side fix: nothing in the core algorithm depends on it
+      anymore, so it's a display-quality question now, not a correctness one. Step 1 and 2's images
+      below work around it directly (outline-only fallback for any cell with a hole) rather than
+      relying on it.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Setup</h2>
+    <p>
+      The exact repro found by the stress test: one long segment plus 3 points (the same arrangement
+      used for task #51's own "bug7" preset), then a second segment crossing near point 4's own
+      region, then a 5th point landing inside what used to be point 4's own tiny leftover territory.
+      Built through the library's own <code>insert_entry!</code>, the same path
+      <code>multi_complex</code>/the interactive demo use.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Step 1 &mdash; a hole forms, silently, from perfectly ordinary insertions</h2>
+    <div class="step">
+      <img src="/images/report_hole_step1.png" alt="Step 1">
+      <div class="desc">
+        <p>
+          After the first segment and 3 points, then a second segment crossing near point 4: point 4's
+          own remaining region (red outline) has shrunk down to a small lens shape, and it turns out to
+          sit <strong>entirely inside</strong> segment 6&ndash;7's own territory (green) &mdash; nothing
+          else touches its boundary. This is a completely ordinary outcome of the construction rules,
+          not a special case anyone deliberately engineered; the bug was that nothing downstream
+          expected it. At this point the complex is already in this state, and everything still works
+          &mdash; <code>insert_entry!</code> itself never needed to notice the hole. The crash only
+          happens on the <em>next</em> insertion, once something needs to walk this cell's own boundary.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 2 &mdash; the next insertion, before the fix</h2>
+    <pre>about to insert the 5th point (used to crash) ...
+ERROR: LoadError: cyclic_boundary_walk: boundary edges don't form a simple cycle
+Stacktrace:
+ [1] cyclic_boundary_walk(cx::CellComplex{2}, edges::Vector{Int64})
+ [2] clip_top_cell_2d!(cx::CellComplex{2}, start_id::Int64, quad::Quadric{2, Float64}, ...)
+ [3] clip_by_hyperplane!(cx::CellComplex{2}, start_id::Int64, ...)
+ [4] insert_features!(cx::CellComplex{2}, feats_so_far::Vector{GFeature{2}}, new_feats::Vector{GFeature{2}})
+ [5] insert_entry!(cx::CellComplex{2}, feats::Vector{GFeature{2}}, new_feats::Vector{GFeature{2}})</pre>
+    <p>
+      Segment 6&ndash;7's own cell (the one with the hole) is what's being clipped when this throws:
+      its <code>subcells</code> list contains both its real outer boundary <em>and</em> the hole's own
+      4 edges, all mixed into one flat list. The walk consumes the 11 outer edges, closes back to its
+      own start vertex, and then has 4 edges left over with nowhere left to attach &mdash; the exact
+      signature of "this is actually two separate loops," not "this data is corrupted."
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Step 3 &mdash; after the fix</h2>
+    <div class="step">
+      <img src="/images/report_hole_step2.png" alt="Step 3">
+      <div class="desc">
+        <p>
+          The same insertion now succeeds. The new point (black dot) lands inside the old hole and
+          splits it correctly into two pieces &mdash; point 4's own further-shrunk remainder (cyan) and
+          the new point's own sliver (white outline; itself drawn outline-only here because, by
+          coincidence, that fresh cell <em>also</em> ends up with its own hole elsewhere in the diagram
+          after the same-label merge pass &mdash; a second, independent instance of the exact scenario
+          this fix handles, not specially arranged for this report). Segment 6&ndash;7's own surrounding
+          cell keeps referencing both resulting pieces as its own two holes, unchanged from before this
+          insertion touched it at all.
+        </p>
+      </div>
+    </div>
+  </div>
+
+</main>
+</body>
+</html>

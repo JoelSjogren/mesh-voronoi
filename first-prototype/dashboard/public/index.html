@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi test dashboard</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --pass: #1a9d5c;
+    --fail: #d1453b;
+    --accent: #3b6fd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --pass: #3fcf82;
+      --fail: #ff6b61;
+      --accent: #6ea1ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  header h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
+  header .status { font-size: 0.85rem; color: var(--muted); }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  main {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+    padding: 1.5rem;
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: opacity 0.3s ease;
+  }
+  .card.stale { opacity: 0.45; }
+  .card .imgwrap {
+    aspect-ratio: 1 / 1;
+    background: repeating-conic-gradient(var(--border) 0% 25%, transparent 0% 50%) 0 0 / 20px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .card.stale .imgwrap img { filter: grayscale(1); }
+  .card img { width: 100%; height: 100%; object-fit: contain; }
+  .card .placeholder { color: var(--muted); font-size: 0.85rem; }
+  .card .body { padding: 0.85rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+  .card .titlerow { display: flex; align-items: center; gap: 0.5rem; }
+  .card .name { font-weight: 600; font-size: 0.95rem; flex: 1; }
+  .badge {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .badge.pass { background: color-mix(in srgb, var(--pass) 18%, transparent); color: var(--pass); }
+  .badge.fail { background: color-mix(in srgb, var(--fail) 18%, transparent); color: var(--fail); }
+  .badge.pending { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+  .card .description { font-size: 0.82rem; color: var(--muted); }
+  .card .detail {
+    font-size: 0.8rem;
+    padding: 0.5rem 0.6rem;
+    border-radius: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+  .card.fail .detail { border-color: color-mix(in srgb, var(--fail) 35%, var(--border)); }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+    padding: 1.5rem;
+  }
+  details.legacy {
+    margin: 0 1.5rem 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card-bg);
+  }
+  details.legacy > summary {
+    cursor: pointer;
+    padding: 0.85rem 1.1rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: var(--muted);
+    user-select: none;
+  }
+  details.legacy .grid { padding: 0 1.5rem 1.5rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>mesh-voronoi &mdash; test dashboard</h1>
+  <div style="display:flex; align-items:center; gap:0.9rem;">
+    <!--NAV-->
+    <span class="status" id="status">connecting&hellip;</span>
+    <button id="rerun">Re-run all</button>
+  </div>
+</header>
+<main id="grid-current" class="grid"></main>
+<details class="legacy">
+  <summary>Legacy (dart-based) tests</summary>
+  <div id="grid-legacy" class="grid"></div>
+</details>
+<script>
+const gridCurrent = document.getElementById('grid-current');
+const gridLegacy = document.getElementById('grid-legacy');
+const statusEl = document.getElementById('status');
+const rerunBtn = document.getElementById('rerun');
+
+let currentRunId = 0;
+const cards = new Map(); // name -> {el, data}
+
+function badgeFor(pass) {
+  if (pass === null) return '<span class="badge pending">pending</span>';
+  return pass
+    ? '<span class="badge pass">pass</span>'
+    : '<span class="badge fail">fail</span>';
+}
+
+function render(name, data, stale) {
+  let entry = cards.get(name);
+  if (!entry) {
+    const el = document.createElement('div');
+    el.className = 'card';
+    const target = data.group === 'legacy' ? gridLegacy : gridCurrent;
+    target.appendChild(el);
+    entry = { el, data: null };
+    cards.set(name, entry);
+  }
+  entry.data = data;
+  const el = entry.el;
+  el.className = 'card' + (stale ? ' stale' : '') + (data.pass === false ? ' fail' : '');
+  const img = data.image_url
+    ? `<img src="${data.image_url}" alt="${name}">`
+    : `<span class="placeholder">not yet rendered</span>`;
+  el.innerHTML = `
+    <div class="imgwrap">${img}</div>
+    <div class="body">
+      <div class="titlerow">
+        <span class="name">${name}</span>
+        ${badgeFor(data.pass)}
+      </div>
+      <div class="description">${data.description}</div>
+      <div class="detail">${data.detail}</div>
+    </div>
+  `;
+}
+
+function markAllStale() {
+  for (const [name, entry] of cards) {
+    render(name, entry.data, true);
+  }
+}
+
+function applyResult(msg) {
+  const stale = msg.run_id !== 0 && msg.run_id < currentRunId;
+  render(msg.name, msg, stale);
+}
+
+async function loadInitial() {
+  const res = await fetch('/cases');
+  const body = await res.json();
+  currentRunId = body.current_run_id;
+  for (const c of body.cases) applyResult(c);
+}
+
+function connectWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen = () => { statusEl.textContent = 'live'; };
+  ws.onclose = () => {
+    statusEl.textContent = 'disconnected — retrying…';
+    setTimeout(connectWs, 1500);
+  };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === 'run_started') {
+      currentRunId = msg.run_id;
+      markAllStale();
+    } else if (msg.type === 'result') {
+      applyResult(msg);
+    }
+  };
+}
+
+rerunBtn.addEventListener('click', async () => {
+  rerunBtn.disabled = true;
+  try {
+    await fetch('/rerun', { method: 'POST' });
+  } finally {
+    setTimeout(() => { rerunBtn.disabled = false; }, 800);
+  }
+});
+
+loadInitial().then(connectWs);
+</script>
+</body>
+</html>

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi-nd &mdash; a cell's own boundary self-intersects</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 900px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .step {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .step img {
+    width: 340px;
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+  }
+  .step .desc { flex: 1; min-width: 260px; }
+  .step .desc h3 { margin-top: 0; font-size: 1rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  pre {
+    background: color-mix(in srgb, var(--bad) 8%, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>mesh-voronoi-nd &mdash; a cell's own boundary self-intersects (task #43)</h1>
+  <div class="sub">One-off investigation report, generated from a live run of the actual construction code (not a mockup) &mdash; see the live dashboard for ongoing test status.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">update</span> the core algorithm no longer tessellates at all</h2>
+    <p>
+      The "most likely location" flagged below was confirmed exactly right, then fixed at the root
+      rather than patched: <code>find_containing_cell</code> (and its BVH counterpart) no longer
+      approximates a curved boundary as a sampled polyline at all. It now solves for exactly where
+      each edge crosses a ray from the query point, directly against the edge's own stored quadric
+      equation, and decides whether that crossing is genuinely on the edge's own bounded arc by
+      projecting onto the curve's <em>natural</em> single-valued axis &mdash; the eigenvector of the
+      curve's own quadratic part for its nonzero eigenvalue, which turns out to need no
+      eigendecomposition at all: for the rank-1 matrices every stored curved edge in this codebase
+      actually has, the matrix's own first row already <em>is</em> that eigenvector. This is exactly
+      the "analytic, not sampled" fix the tessellation approach was missing &mdash; the arc's own
+      turning point (its blind spot) is no longer special-cased away, it's simply never assumed
+      monotonic in the first place.
+    </p>
+    <p>
+      Verified directly against the exact repro below: 0 mismatches across 19,366 grid points checked
+      against the brute-force oracle in the region that used to render as a broken bowtie, and
+      <code>find_hover_target</code> resolves cleanly there with no error. Cell 243's own <em>stored</em>
+      structure (see Step 3) was correct all along &mdash; the bug was entirely in a downstream consumer
+      approximating it, never in construction itself.
+    </p>
+    <p>
+      <span class="badge bad">still open, lower stakes</span> <code>tessellate_curve</code> itself
+      (used only for rendering: <code>polygon_vertices_2d</code>, <code>plot_cells_2d</code>, the
+      images on this very page) still uses the old "whichever coordinate varies more" convention and
+      can still visibly self-intersect when drawn. Not fixed here &mdash; it's a display-quality issue
+      now, not a correctness one, since nothing in the core algorithm depends on it anymore.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Summary (original report)</h2>
+    <p>
+      A live top cell's own boundary, walked via <code>polygon_vertices_2d</code>, can come out as a
+      polygon that <strong>geometrically self-intersects</strong> &mdash; two of its own non-adjacent
+      edges cross each other in the plane. This is distinct from (but a sibling of) the other failure
+      mode the same function can hit, <code>"cell X's boundary edges don't form a simple cycle"</code>
+      (the edges don't even connect into a cycle at all) &mdash; that variant was hit directly by a real
+      user session this week and is now caught defensively in the interactive demo's own hover code
+      (a debugging aid degrading gracefully, not crashing the session) rather than fixed at the source.
+      This report is about the self-intersection variant specifically, still open, tracked as task #43.
+    </p>
+    <p>
+      <span class="badge bad">still open</span> no fix attempted here &mdash; this report's job is to
+      pin down <em>where</em> the bug actually lives, which turned out to be more specific and more
+      surprising than expected.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Setup</h2>
+    <p>
+      8 random points, inserted first, then one long segment drawn diagonally across the whole canvas
+      &mdash; deliberately close to how the user's own crash report described it ("lots of points and
+      then a big long segment running diagonally across the screen"). Minimized from an original
+      25-point repro down to 8 by simply dropping points from the end of the list and re-checking; it
+      stayed reproducible all the way down. Built through the library's own <code>insert_entry!</code>,
+      the same path <code>multi_complex</code>/the demo use.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Step 1 &mdash; 8 points alone</h2>
+    <div class="step">
+      <img src="/images/report_self_intersect_step1.png" alt="Step 1">
+      <div class="desc">
+        <p>Base case: a plain power diagram of 8 points, G1-only. Every cell here is convex by
+        construction &mdash; there's no way for a flat-bisector-only diagram to produce a self-intersecting
+        polygon, so this step is only here to confirm the starting state is unremarkable.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 2 &mdash; the diagonal segment is added <span class="badge bad">bug appears</span></h2>
+    <div class="step">
+      <img src="/images/report_self_intersect_step2.png" alt="Step 2">
+      <div class="desc">
+        <p>One segment inserted, crossing several existing cells. Cell 243 (red outline, labeled
+        "point 4 wins here") renders as a visibly broken bowtie shape near (7,1.5) &mdash; exactly what a
+        self-intersecting polygon looks like when handed to a plain fill routine. (Note the similar-looking
+        rough patch near (&minus;3,1) too &mdash; a different, nearby construction wrinkle, not investigated
+        here; this report follows cell 243 specifically.)</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 3 &mdash; cell 243's own boundary, up close</h2>
+    <div class="step">
+      <img src="/images/report_self_intersect_step3.png" alt="Step 3">
+      <div class="desc">
+        <p>Cell 243's <em>stored</em> structure is completely unremarkable: exactly three subcells
+        (orange dotted lines) &mdash; two straight edges and one curved one, forming a clean, valid
+        graph cycle. The blue solid line is <code>polygon_vertices_2d</code>'s own reconstruction,
+        which tessellates the curved edge into 17 sample points (numbered) for rendering. Points
+        3&ndash;12 trace a smooth arc bulging up and to the right, peaking around (7.3, 4.1) &mdash; then
+        points 12&ndash;18 plunge down through the middle of the shape, crossing straight back through the
+        3&rarr;12 arc and the 1&rarr;3 edge on the way to point 1. That crossing is the self-intersection.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Where this pointed, and what confirmed it</h2>
+    <p>
+      Two hypotheses were checked and ruled out before finding the real one, which was then confirmed
+      exactly (not just plausibly) and fixed for every core-algorithm consumer:
+    </p>
+    <ul>
+      <li>
+        <strong>Not a malformed subcell list.</strong> Cell 243 has exactly three subcells, and they
+        genuinely form a simple cycle vertex-to-vertex. The self-intersection is entirely a property of
+        how the curved edge gets <em>sampled</em> into points for rendering, not of the underlying graph
+        structure.
+      </li>
+      <li>
+        <strong>Not a near-degenerate line-pair slipping past <code>is_line_pair</code>'s tolerance</strong>
+        (the mechanism behind the multi-crossing/line-pair work earlier this session). Checked directly:
+        the curve's own <code>det3</code> degeneracy measure is <code>0.1485</code>, about 1650&times;
+        above the detection threshold &mdash; nowhere near degenerate. Its eigenvalues are exactly
+        <code>{0, 1}</code>, the textbook signature of a genuine point-vs-line parabola (provably a
+        single smooth branch, not two disconnected ones), not a pair of lines.
+      </li>
+      <li>
+        <strong>Confirmed: <code>tessellate_curve</code>'s own parametrization loses track of the
+        curve.</strong> Every individual sample point is genuinely on the curve (all 17 agree with the
+        stored quadric's own equation to <code>~1e-14</code>) &mdash; so it's not "solving the wrong
+        equation" at any single sample, it's that the <em>sequence</em> doesn't trace one continuous
+        path. <code>tessellate_curve</code> walks whichever coordinate (x or y) varies more between the
+        two endpoints; for this arc, that heuristic loses continuity partway through, because the arc's
+        own turning point (its vertex, where <em>neither</em> raw coordinate stays monotonic) falls
+        between the two endpoints being sampled &mdash; exactly the condition a "walk one coordinate"
+        scheme can't handle, confirmed by construction, not just observed.
+      </li>
+    </ul>
+    <p>
+      The general fix: every curved edge this codebase actually stores is a genuine parabola (a
+      line-vs-line bisector is always two straight lines instead, handled separately by
+      <code>clip_by_line_pair!</code> since the multi-crossing work earlier this session &mdash; never
+      stored as one curved edge). A parabola's own quadratic part <code>M</code> is always rank 1 (one
+      zero eigenvalue), and for such a matrix the eigenvector of its <em>nonzero</em> eigenvalue is
+      <code>M</code>'s own first row whenever <code>det(M)=0</code> &mdash; no eigendecomposition
+      needed. Projecting onto that direction gives a single-valued parameter for the <em>entire</em>
+      curve, turning point included, unlike either raw coordinate. <code>find_containing_cell</code>
+      (and its BVH counterpart) now use this directly: for each boundary edge, solve exactly where it
+      crosses a ray from the query point (substituting into the edge's own stored equation, not
+      approximating it as a polyline first), and confirm each crossing is genuinely on that edge's
+      bounded arc by checking whether its projection onto the curve's own natural axis falls between
+      the two endpoints' projections. No sampling, no polygon, nothing to self-intersect.
+    </p>
+    <p>
+      <code>tessellate_curve</code> itself (rendering only) could use the same natural-axis
+      parametrization to stop producing self-intersecting approximations too &mdash; not done here, since
+      nothing in the core algorithm depends on it anymore and it's now a display-quality question, not
+      a correctness one.
+    </p>
+  </div>
+
+</main>
+</body>
+</html>

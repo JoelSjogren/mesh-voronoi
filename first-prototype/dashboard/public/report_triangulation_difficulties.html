@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi-nd &mdash; triangulation difficulties (historical note)</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 900px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>mesh-voronoi-nd &mdash; triangulation difficulties (historical note, task #45)</h1>
+  <div class="sub">Converted from the repo's own <code>triangulation-difficulties.md</code> &mdash; a retrospective, not a live investigation, so there are no step images here the way the bug reports have.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">superseded</span> the whole approach was removed</h2>
+    <p>
+      This documents the difficulties encountered while the interactive demo
+      (<code>examples/interactive_demo.jl</code>) rendered hover highlights by reconstructing a cell's
+      polygon on the CPU and triangulating it for a <code>GL_TRIANGLES</code> fill. That approach has
+      since been <strong>removed entirely</strong> and replaced with a shader-based design (the
+      background fragment shader tints pixels directly, per-pixel, using the same distance-field
+      evaluation it already performs for the main diagram &mdash; see the demo's top-of-file comment
+      and task #44). This note exists so a future implementer doesn't have to rediscover the same
+      problems if triangulation is ever reintroduced for some other purpose (an export format, a
+      static report image, etc.).
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Why triangulation was attempted at all</h2>
+    <p>
+      Before the redesign, hovering a cell/edge/vertex highlighted it by finding the hovered cell
+      (<code>find_hover_target</code>), reconstructing its polygon (<code>polygon_vertices_2d</code>,
+      walking the cell's boundary edges and tessellating curved ones into polyline samples), and
+      triangulating that polygon (<code>ear_clip_simple_polygon</code>) so it could be filled with
+      <code>GL_TRIANGLES</code>. This seemed natural because the output complex's cells are stored as
+      boundary graphs, not pre-triangulated meshes &mdash; filling one on screen "should" mean
+      triangulating it. In hindsight this entire code path was solving a problem the renderer didn't
+      need to solve, since the shader can answer "is this pixel inside the hovered cell" directly.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Difficulty 1 &mdash; cells are not convex</h2>
+    <p>
+      The first bug (bug2 preset) was a point-in-polygon fill test that assumed convexity. A segment's
+      own Voronoi territory against a nearby point site is bounded by a parabola; the cell on the
+      <em>concave</em> side of that parabola is genuinely non-convex, and simple centroid/fan-based
+      point-in-polygon checks gave wrong answers there. Any polygon-fill approach for these cells has
+      to handle arbitrary simple (non-convex) polygons from the start &mdash; there is no "assume
+      convex, special-case the rest" shortcut available in this domain.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Difficulty 2 &mdash; ear-clipping got stuck on near-duplicate vertices</h2>
+    <p>
+      <code>ear_clip_simple_polygon</code> implements standard ear-clipping (repeatedly removing a
+      convex vertex whose triangle contains no other polygon vertex). It got numerically stuck &mdash;
+      leaving part of the polygon untriangulated, silently, with no error &mdash; whenever the vertex
+      list contained duplicate or near-duplicate points. Two independent sources produced these:
+    </p>
+    <ul>
+      <li><code>polygon_vertices_2d</code>'s own boundary walk closes back to its start point, so
+      <code>poly[end] == poly[1]</code> exactly (a literal duplicate coordinate).</li>
+      <li>Curved-edge tessellation (sampling a parabolic/quadric boundary into a polyline) can place
+      adjacent samples extremely close together near high curvature, producing <em>near</em>-duplicates
+      that ear-clipping's convexity/containment tests (built on exact cross-product signs) treat
+      inconsistently.</li>
+    </ul>
+    <p>
+      This was fixed at the time by deduplicating consecutive near-identical vertices
+      (<code>atol=1e-9</code>, including the wrap-around last/first pair) before handing the polygon to
+      the ear-clipper. The fix worked, but it is a patch on a symptom: any future tessellation parameter
+      change, or any construction routine that produces tighter-than-expected sample spacing, can
+      reintroduce the same failure mode. There is no principled bound on "how close is too close" for
+      ear-clipping's cross-product tests short of exact/adaptive arithmetic, which the demo's rendering
+      path never had.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Difficulty 3 &mdash; detecting the bug at all was unreliable</h2>
+    <p>
+      Visual inspection did not reliably reveal a partially-untriangulated polygon (a missing sliver of
+      a large cell can be a few pixels wide). The bug was actually confirmed via a shoelace-formula area
+      of the reconstructed polygon compared against the summed area of the emitted triangles &mdash; a
+      mismatch meant the ear-clipper had dropped a region. This is a good technique in general but
+      wasn't in place from the start, so the bug shipped silently for a while before being caught.
+    </p>
+    <p>
+      A related trap: an early "overlap detector" (<code>polys_overlap</code>, checking whether one
+      polygon's centroid or edge-midpoints fall inside another) threw many false positives &mdash; 70
+      flagged "overlaps" on one preset &mdash; because it is itself unreliable for non-convex cells.
+      Every flagged case had to be cross-validated against a brute-force point-sampling oracle
+      (<code>brute_force_label_multi</code>) or the real <code>find_containing_cell</code> before being
+      trusted as a genuine bug, rather than trusting the heuristic's own verdict.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Difficulty 4 &mdash; a genuine self-intersecting cell boundary</h2>
+    <p>
+      Even after the deduplication fix, one cell in the bug5 preset (id 685, in a 10-entry construction)
+      produced a polygon with a real geometric self-intersection &mdash; edge (7,8) crossed edge (22,23)
+      &mdash; not a numerical artifact of tessellation. <code>polygon_vertices_2d</code>'s boundary walk
+      only checks vertex <em>adjacency</em> (does the graph form a closed cycle), not whether the
+      resulting polygon is <em>simple</em> (non-self-intersecting) once vertex coordinates are taken
+      into account. No amount of triangulation-side patching (deduplication, ear-clip robustness) can
+      fix this, because the input to triangulation is already invalid &mdash; the underlying subcells
+      constructed by <code>insert_own_lines!</code>/<code>clip_by_hyperplane!</code> do not actually
+      form a simple cycle for this cell, even though every individual edge looked locally correct. This
+      was suspected at the time to be related to (but not conclusively identified as) the multi-crossing
+      case tracked separately (task #26: a curved bisector crossing a single edge more than once).
+    </p>
+    <p>
+      <span class="badge good">since resolved</span> This specific construction-level bug was tracked
+      as task #43 and fixed later in the same investigation thread &mdash; see the
+      <a href="/reports/self-intersect">self-intersecting boundary report</a> for the full root-cause
+      story: it traced not to the multi-crossing case, but to <code>tessellate_curve</code>/
+      <code>find_containing_cell</code> parametrizing a curved edge by whichever raw coordinate (x or y)
+      happened to vary more between its endpoints, which loses continuity whenever the arc's own turning
+      point falls between them.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>The broader lesson</h2>
+    <p>
+      Every difficulty above is a consequence of the same root cause: polygon reconstruction and
+      triangulation is a <em>second, independent</em> representation of "what does this cell look like,"
+      built by walking a boundary graph and re-deriving geometry that the underlying distance-field
+      computation already gets right by construction. Bugs in that second representation (duplicate
+      vertices, non-convexity, self-intersection) do not imply bugs in the diagram itself &mdash; but
+      they were indistinguishable from real diagram bugs without careful oracle cross-validation, which
+      cost significant debugging time. The shader-based redesign sidesteps the whole class: it asks
+      "which feature(s) win at this pixel" using the exact same per-pixel distance comparison that
+      produces the main diagram, with no separate polygon, no boundary walk, and no triangulation step
+      to get wrong.
+    </p>
+  </div>
+
+</main>
+</body>
+</html>

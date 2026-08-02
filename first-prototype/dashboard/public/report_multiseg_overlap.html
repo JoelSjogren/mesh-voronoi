@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi-nd &mdash; multi-segment overlap bug report</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 900px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .step {
+    display: flex;
+    gap: 1.5rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .step img {
+    width: 340px;
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+  .step .desc { flex: 1; min-width: 260px; }
+  .step .desc h3 { margin-top: 0; font-size: 1rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  .legend {
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0.8rem;
+  }
+  .legend span.sw { display: inline-block; width: 0.9rem; height: 0.9rem; border-radius: 3px; margin-right: 0.35rem; vertical-align: -0.1rem; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>mesh-voronoi-nd &mdash; multi-segment overlap bug, step by step</h1>
+  <div class="sub">One-off investigation report, generated from a live run of the actual construction code (not a mockup) &mdash; see the live dashboard for ongoing test status.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">update</span> the root cause is fixed &mdash; and so is the case once misdescribed as "non-generic"</h2>
+    <p>
+      The overlap illustrated below was traced to <code>edge_crossings</code> parametrizing an
+      existing boundary edge as the straight chord between its two endpoints, even once that edge
+      is actually curved (true since a segment's own bisector can be a parabola). Fixed by having
+      the crossing computation solve against the edge's own stored curve instead, whenever it has
+      one. The <em>exact three-segment scenario below</em> (steps 1&ndash;4) no longer produces an
+      overlap &mdash; verified directly: 0 overlapping cells among all 19 live cells after this same
+      refinement step, and it's now a permanent regression test.
+    </p>
+    <p>
+      <span class="badge good">also now fixed</span> a related, harder case this report originally
+      called out as unimplemented: a comparison between two features whose bisector is itself
+      curved, touching a cell whose boundary is <em>also</em> already curved from an earlier step
+      &mdash; in general a quadric&ndash;quadric intersection (up to 4 points via Bezout). This
+      report's own original wording described the rejected case as outside "generic case only"
+      limits, as if it were some rare coincidence being deliberately excluded &mdash; <strong>that
+      framing was wrong, and worth flagging explicitly</strong>: this configuration is exactly as
+      generic as the overlap bug this whole report is about (an open, nonzero-measure set of
+      configurations produces it, not an equality-constrained special case like two parallel
+      segments). It was a genuine gap in what was implemented, not a deliberately-excluded
+      degenerate case. It's since been resolved exactly (<code>quadric_quadric_crossings</code>):
+      every stored curved edge in this codebase's feature model is a point-vs-line bisector sharing
+      one feature with any other curve it's compared against, which reduces the general quadric-
+      quadric problem to two ordinary line-vs-quadric calls instead of the full degree-4 case.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Summary (original report)</h2>
+    <p>
+      Inserting three segments (or a point after several segments) one at a time can leave two
+      stored cells <strong>geometrically overlapping</strong> &mdash; a real invariant violation of the
+      construction, not a floating-point rounding issue. It's masked whenever the lower-numbered
+      overlapping cell happens to be found first during point-location; it only becomes visible once
+      that cell is later superseded (split away) by a further insertion, revealing a duplicate
+      underneath.
+    </p>
+    <p>
+      <span class="badge good">works</span> a single segment (curved point-vs-segment bisector) &mdash;
+      cross-validated with 0 mismatches across 13,000+ grid points.<br>
+      <span class="badge good">works</span> multiple segments that are far apart / never interact closely.<br>
+      <span class="badge bad">broken</span> a third simplex whose own dividing lines have to refine a
+      cell that already carries curved boundary structure from an earlier comparison.
+    </p>
+    <p>
+      The scenario below reproduces it with the smallest configuration found so far: three
+      segments and one query point, none of them touching or crossing.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Setup</h2>
+    <p>Three segments, inserted in this order:</p>
+    <ul>
+      <li><span class="mono">segment 1</span>: (0.1, 0.05) &rarr; (1.4, -0.2)</li>
+      <li><span class="mono">segment 2</span>: (2.3, 1.1) &rarr; (3.6, 0.7)</li>
+      <li><span class="mono">segment 3</span>: (1.2, 2.6) &rarr; (2.5, 3.3)</li>
+    </ul>
+    <p>
+      Query point (the red star in every image): <span class="mono">(1.106, 1.121)</span> &mdash;
+      correctly closest to segment 2's near endpoint (2.3, 1.1), distance&sup2; &asymp; 1.425.
+    </p>
+    <div class="legend">
+      <div><span class="sw" style="background:mediumseagreen"></span>segment 1 interior</div>
+      <div><span class="sw" style="background:royalblue"></span>segment 2 interior</div>
+      <div><span class="sw" style="background:lightskyblue"></span>segment 2 near-endpoint</div>
+      <div><span class="sw" style="background:orchid"></span>segment 3 interior</div>
+      <div><span class="sw" style="background:plum"></span>segment 3 near-endpoint</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 1 &mdash; segment 1 alone</h2>
+    <div class="step">
+      <img src="/images/report_step1.png" alt="Step 1">
+      <div class="desc">
+        <p>Base case: segment 1 is the only thing inserted so far, so its own perpendicular cuts
+        split the whole bounding box into its three own regions (beyond each endpoint, plus the
+        interior strip). The query point starts out inside segment 1's interior region &mdash; correct
+        for now, since nothing else exists yet to compete with it.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 2 &mdash; segment 2's own lines (pure refinement)</h2>
+    <div class="step">
+      <img src="/images/report_step2.png" alt="Step 2">
+      <div class="desc">
+        <p>Before segment 2 is compared against anything, its own two perpendicular cuts get
+        inserted everywhere they reach &mdash; a label-preserving refinement, not a relabeling. Every
+        region should still carry whatever label it had before this step.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 3 &mdash; segment 2 compared against segment 1 <span class="badge good">correct</span></h2>
+    <div class="step">
+      <img src="/images/report_step3.png" alt="Step 3">
+      <div class="desc">
+        <p>Segment 2 is now compared feature-by-feature against whichever of segment 1's features
+        currently owns each region. Where segment 2 wins, the cell gets clipped and relabeled. The
+        query point is correctly reassigned here: it's now inside segment 2's near-endpoint region
+        (light blue), matching the oracle.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 4 &mdash; segment 3's own lines <span class="badge bad">bug appears</span></h2>
+    <div class="step">
+      <img src="/images/report_step4.png" alt="Step 4">
+      <div class="desc">
+        <p>Segment 3's own perpendicular cuts are inserted next &mdash; still meant to be pure
+        refinement, touching only region <em>shapes</em>, not labels. But comparing this image to
+        Step 3: the dark green (segment 1 interior) region has already started reaching further up
+        and to the right than it should, toward where segment 2's light-blue territory was. The two
+        red-outlined cells here were found, independently, to both contain the query point &mdash;
+        point-location just reports whichever one it finds first in storage order, so the overlap
+        itself doesn't throw an error yet.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 5 &mdash; segment 3 compared against existing winners <span class="badge bad">wrong result</span></h2>
+    <div class="step">
+      <img src="/images/report_step5.png" alt="Step 5">
+      <div class="desc">
+        <p>Segment 3 is now compared against whatever each region's current winner is. For the
+        query point's location, that "current winner" is segment 1 (because of the Step 4 overlap
+        the comparison stage doesn't know about) instead of segment 2. The comparison proceeds
+        correctly given <em>that</em> premise, but the premise was already wrong: the query point ends
+        up permanently labeled as segment 1's interior. The oracle says it should be segment 2's
+        near-endpoint region &mdash; compare directly against Step 3, where that region (light blue)
+        visibly reached the query point and now no longer does.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Where this points</h2>
+    <p>
+      The refinement step (<span class="mono">clip_by_plane_preserving_label!</span>, reused from the
+      main clip routine via two symmetric dummy points whose bisector is exactly the target plane)
+      assumes splitting one cell at a time, independently, is always safe. That's true when every
+      cell is a simple flat-edged polygon sharing boundaries with exactly the neighbors its own
+      subcell list already knows about &mdash; guaranteed in the points-only case. It stops being
+      guaranteed once a cell's own boundary already includes a curved edge from an earlier
+      comparison: refining it can produce a new piece whose shape doesn't correctly account for
+      what a neighboring cell (reached only through that curved edge) already claims. Fixing this
+      needs the refinement step to be aware of curved-boundary adjacency, not just re-use the
+      flat-hyperplane clip as-is.
+    </p>
+  </div>
+
+</main>
+</body>
+</html>
