@@ -1,0 +1,5 @@
+[deps]
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+MeshVoronoi = "610501a2-07a5-464b-83bf-c8cecd7cc972"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"

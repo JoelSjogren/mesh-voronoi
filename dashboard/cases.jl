@@ -2,7 +2,7 @@ using MeshVoronoi
 using StaticArrays
 using GLMakie
 
-include(joinpath(@__DIR__, "..", "examples", "house_chimney.jl"))
+include(joinpath(@__DIR__, "..", "first-prototype", "examples", "house_chimney.jl"))
 
 """
 One dashboard entry: a short human `description`, and `run` -- a zero-arg
@@ -158,7 +158,7 @@ how progress on the dimension-generic redesign shows up on the dashboard
 as it's being built, milestone by milestone (G0, G1, ...).
 """
 function case_meshvoronoind_tests()
-    nd_dir = joinpath(@__DIR__, "..", "..")
+    nd_dir = joinpath(@__DIR__, "..")
     if !isdir(nd_dir)
         fig = text_summary_figure("MeshVoronoi", ["package directory not found:", nd_dir], false)
         return false, fig, "mesh-voronoi-nd directory not found at $nd_dir"
@@ -199,7 +199,7 @@ Kept alongside `case_two_points` (not replacing it) so old and new can be
 compared directly as more milestones land.
 """
 function case_two_points_nd()
-    nd_dir = joinpath(@__DIR__, "..", "..")
+    nd_dir = joinpath(@__DIR__, "..")
     render_project = joinpath(@__DIR__, "render_env")
     if !isdir(nd_dir)
         fig = text_summary_figure("two_points (new pipeline)", ["mesh-voronoi-nd not found"], false)
@@ -238,7 +238,7 @@ brute-force oracle over a grid, exactly like the 2D prototype's own
 `cross_validate` pattern.
 """
 function case_five_points_nd()
-    nd_dir = joinpath(@__DIR__, "..", "..")
+    nd_dir = joinpath(@__DIR__, "..")
     render_project = joinpath(@__DIR__, "render_env")
     if !isdir(nd_dir)
         fig = text_summary_figure("five points (new pipeline)", ["mesh-voronoi-nd not found"], false)
@@ -330,7 +330,7 @@ ever regresses to two-or-more again, this case should fail rather than
 silently going back to documenting the old gap.
 """
 function case_merge_gap_nd()
-    nd_dir = joinpath(@__DIR__, "..", "..")
+    nd_dir = joinpath(@__DIR__, "..")
     render_project = joinpath(@__DIR__, "render_env")
     if !isdir(nd_dir)
         fig = text_summary_figure("merge gap (new pipeline)", ["mesh-voronoi-nd not found"], false)
@@ -386,7 +386,7 @@ as an actual curved polygon, not a straight-chord approximation) against
 the brute-force oracle over a grid.
 """
 function case_point_segment_nd()
-    nd_dir = joinpath(@__DIR__, "..", "..")
+    nd_dir = joinpath(@__DIR__, "..")
     render_project = joinpath(@__DIR__, "render_env")
     if !isdir(nd_dir)
         fig = text_summary_figure("point + segment (new pipeline)", ["mesh-voronoi-nd not found"], false)
