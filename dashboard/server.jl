@@ -110,6 +110,7 @@ const REPORT_LIST = [
     ("self-intersect", "report_self_intersect.html", "Self-intersecting boundary", "2026-07-28"),
     ("hole-topology", "report_hole_topology.html", "Cell territory with a hole", "2026-07-30"),
     ("triangulation-difficulties", "report_triangulation_difficulties.html", "Triangulation difficulties (historical)", "2026-07-30"),
+    ("infinity-layer", "report_infinity_layer.html", "Layer at infinity (planning)", "2026-08-04"),
 ]
 const REPORTS = Dict(key => file for (key, file, _, _) in REPORT_LIST)
 

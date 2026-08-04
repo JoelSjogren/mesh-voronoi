@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi &mdash; a layer at infinity for unbounded cells</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+    --amber: #b1791e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+      --amber: #d9a544;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 920px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  h3 { font-size: 0.98rem; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .badge.amber { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); }
+  .formula {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.95rem;
+    background: color-mix(in srgb, var(--accent) 7%, var(--card-bg));
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0.8rem 0;
+  }
+  pre {
+    background: color-mix(in srgb, var(--bad) 8%, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .fig { text-align: center; margin: 1rem 0; }
+  .fig svg { max-width: 100%; height: auto; }
+  .fig figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  .toc { font-size: 0.92rem; }
+  .toc ol { padding-left: 1.3rem; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>A layer at infinity for unbounded cells (planning report)</h1>
+  <div class="sub">Written before any code exists for this &mdash; a mathematical analysis and implementation plan, not a bug report. See the bottom for status and next steps.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card">
+    <h2><span class="badge amber">planning</span> the problem</h2>
+    <p>
+      Every construction today starts from <code>init_bbox_complex</code>, an axis-aligned rectangle
+      chosen by padding the input's own bounding box by an arbitrary margin. Every cell that's
+      genuinely unbounded (its true territory extends to infinity in some direction) gets artificially
+      truncated at this rectangle's edge instead &mdash; a rendering convenience, not a property of the
+      diagram itself. The ask: replace this with something principled, where the added boundary is a
+      real, labeled part of the output complex (an actual "this cell touches infinity here" fact you
+      can query), not an arbitrary clip.
+    </p>
+    <p>
+      The proposed idea: a suitably scaled copy of the convex hull of the input can stand in for this
+      boundary, with each added boundary edge labeled by whichever input vertex it's closest to
+      (<code>&lt;V1,&#8734;&gt;</code>), and each added boundary vertex labeled by the pair of input
+      vertices whose bisector reaches it (<code>&lt;V1,V2,&#8734;&gt;</code>). This report works out
+      whether that's exactly right, finds one place where the literal reading of "scaled copy" fails,
+      and proposes the corrected version.
+    </p>
+    <div class="toc">
+      <strong>Contents:</strong>
+      <ol>
+        <li>The one fact that makes this tractable: winners at infinity are a support-function question</li>
+        <li>Points only: the normal fan, and why it matches the proposed labeling exactly</li>
+        <li>Where literal convex-hull scaling breaks &mdash; a concrete counterexample</li>
+        <li>The corrected formulation: uniform edge offset, not scalar scaling</li>
+        <li>Segments change the picture: hull edges that are real input segments</li>
+        <li>3D, briefly</li>
+        <li>Recommended implementation plan and open questions</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>1. The one fact that makes this tractable</h2>
+    <p>
+      Fix a direction (unit vector) <code>u</code> and look at the winner among a fixed set of bounded
+      input features as you walk out along <code>x = R&middot;u</code> with <code>R &rarr; &#8734;</code>.
+      For any bounded set <code>S</code> (a point, a segment, in general any of this project's own
+      feature validity regions restricted to a bounded piece of geometry):
+    </p>
+    <div class="formula">sqdist(R&middot;u, S) = R&sup2; &minus; 2R&middot;h<sub>S</sub>(u) + O(1),  where h<sub>S</sub>(u) = sup<sub>p&isin;S</sub> u&middot;p  (the support function of S)</div>
+    <p>
+      because <code>|Ru&minus;p|&sup2; = R&sup2; &minus; 2R(u&middot;p) + |p|&sup2;</code> and <code>|p|&sup2;</code> stays bounded
+      while <code>R&rarr;&#8734;</code>, so minimizing over <code>p&isin;S</code> reduces, at leading order, to
+      maximizing <code>u&middot;p</code>. Every feature's distance grows like <code>R&sup2;</code> with the <em>same</em>
+      leading coefficient &mdash; the entire competition is decided by which feature has the larger
+      <code>O(R)</code> correction, i.e. the larger support-function value. This is exactly why ordinary
+      (point-set) Voronoi bisectors are straight lines with no curvature term surviving at infinity, generalized
+      to this project's own richer feature set.
+    </p>
+    <p>
+      Two structural consequences fall out immediately:
+    </p>
+    <ul>
+      <li><strong>A segment's support function equals its two endpoints'.</strong> <code>h<sub>[a,b]</sub>(u) = max(u&middot;a,
+        u&middot;b)</code> exactly, for every <code>u</code> &mdash; the max of a linear function over a segment is
+        always at an endpoint. So at this leading order, a segment contributes nothing beyond what its own two
+        endpoints already contribute.</li>
+      <li><strong>Only the convex hull's own vertices can ever win.</strong> <code>argmax<sub>k</sub> h<sub>S<sub>k</sub></sub>(u)</code>
+        is, by definition, exactly the classical support-function characterization of the convex hull of every
+        input vertex &mdash; the vertex (or, on a measure-zero set of directions, tied set of vertices) extremal in
+        direction <code>u</code>.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>2. Points only: the normal fan</h2>
+    <p>
+      For a pure point set, this is the textbook picture, restated in this project's own vocabulary: the
+      directions <code>u</code> partition into the convex hull's own <strong>normal cones</strong> &mdash; one
+      per hull vertex <code>V<sub>i</sub></code>, the set of directions for which <code>V<sub>i</sub></code> alone
+      maximizes <code>u&middot;V<sub>i</sub></code>. Two adjacent normal cones meet along a single ray: the direction
+      exactly perpendicular to hull edge <code>V<sub>i</sub>V<sub>j</sub></code>, where <code>V<sub>i</sub></code>
+      and <code>V<sub>j</sub></code> tie.
+    </p>
+    <p>
+      This is <em>exactly</em> the proposed labeling, read as a statement about directions rather than
+      literal geometry: a normal cone (an angular range, i.e. a whole arc of the boundary-at-infinity) is
+      labeled <code>&lt;V<sub>i</sub>,&#8734;&gt;</code>; the single ray where two adjacent cones meet is labeled
+      <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code>. A hull vertex becomes a boundary <em>edge</em>
+      (an arc of directions); a hull edge becomes a boundary <em>vertex</em> (one direction) &mdash; the labeling
+      is dual to the hull's own combinatorics, matching what was asked to be verified.
+    </p>
+    <div class="fig">
+      <svg viewBox="0 0 460 280" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="230,40 380,150 300,240 130,230 90,110" fill="none" stroke="var(--muted)" stroke-width="1.4" stroke-dasharray="3,3"/>
+        <circle cx="230" cy="40" r="3.5" fill="var(--text)"/>
+        <circle cx="380" cy="150" r="3.5" fill="var(--text)"/>
+        <circle cx="300" cy="240" r="3.5" fill="var(--text)"/>
+        <circle cx="130" cy="230" r="3.5" fill="var(--text)"/>
+        <circle cx="90" cy="110" r="3.5" fill="var(--text)"/>
+        <text x="228" y="25" font-size="13" fill="var(--text)" text-anchor="middle">V1</text>
+        <text x="400" y="153" font-size="13" fill="var(--text)">V2</text>
+        <text x="310" y="258" font-size="13" fill="var(--text)">V3</text>
+        <text x="110" y="248" font-size="13" fill="var(--text)">V4</text>
+        <text x="65" y="108" font-size="13" fill="var(--text)">V5</text>
+        <!-- offset (dual) boundary, drawn as parallel edges pushed outward -->
+        <polygon points="230,-40 470,120 350,320 60,300 -30,90" fill="none" stroke="var(--accent)" stroke-width="2"/>
+        <text x="350" y="10" font-size="11" fill="var(--accent)">&lt;V1,&#8734;&gt; arc</text>
+        <text x="410" y="230" font-size="11" fill="var(--accent)">&lt;V2,V3,&#8734;&gt;</text>
+      </svg>
+      <figcaption>Hull vertices (black) &rarr; boundary-at-infinity edges (blue arcs); hull edges &rarr; boundary-at-infinity vertices. Schematic, not to scale.</figcaption>
+    </div>
+  </div>
+
+  <div class="card" style="border-color: var(--bad);">
+    <h2><span class="badge bad">found a real gap</span> 3. Where literal convex-hull scaling breaks</h2>
+    <p>
+      The literal reading of "a suitable scaling of the convex hull" is: pick an origin <code>O</code> inside the
+      hull, and map every vertex <code>V<sub>i</sub> &rarr; O + &lambda;(V<sub>i</sub>&minus;O)</code> for a huge
+      <code>&lambda;</code>. The natural hope is that scaled vertex <code>&lambda;V<sub>i</sub></code> then sits
+      inside <code>V<sub>i</sub></code>'s own normal cone, so the scaled hull's own vertex/edge structure
+      <em>is</em> the labeled boundary. <strong>This is false in general</strong>, even for a fully generic
+      (non-degenerate, affinely-spanning) input.
+    </p>
+    <p>
+      Concrete counterexample: <code>V1=(0,0)</code>, <code>V2=(1,0.01)</code>, <code>V3=(&minus;100,100)</code>
+      (a valid, non-degenerate triangle &mdash; 3 affinely independent points, the generic case this project cares
+      about). Take <code>O</code> close to <code>V1</code> but strictly interior, e.g.
+      <code>O=(0.1,0.001)</code>. The scaling direction toward <code>V1</code> is
+      <code>V1&minus;O &asymp; (&minus;1,0)</code>. Checking which vertex actually maximizes <code>u&middot;V<sub>k</sub></code>
+      for <code>u=(&minus;1,0)</code>:
+    </p>
+    <table>
+      <tr><th>vertex</th><th><code>u&middot;V<sub>k</sub></code></th></tr>
+      <tr><td>V1</td><td>0</td></tr>
+      <tr><td>V2</td><td>&minus;1</td></tr>
+      <tr><td>V3</td><td><strong>100</strong></td></tr>
+    </table>
+    <p>
+      <code>V3</code> wins, not <code>V1</code> &mdash; even though the scaled point sits visually right where
+      <code>V1</code>'s own vertex should be. The scaled hull, rigidly scaled about a fixed interior point, can
+      put a vertex in the <em>wrong</em> normal cone whenever the hull is skewed relative to the scaling origin.
+      This isn't a degenerate/non-generic edge case &mdash; it's 3 ordinary points in general position; it's a
+      property of the (origin, hull) pair, not of genericity.
+    </p>
+  </div>
+
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">the fix</span> 4. Uniform edge offset, not scalar scaling</h2>
+    <p>
+      The failure is in <em>how</em> the hull is grown, not in the idea that the hull's own combinatorics are the
+      right skeleton. The correct construction: push every hull edge's own supporting line outward, along its
+      <em>own outward normal</em>, by the same large distance <code>D</code> (not by scaling every vertex by the
+      same factor from one shared origin) &mdash; then re-intersect adjacent offset lines for the new vertices.
+      This is ordinary convex-polygon offsetting (equivalently, eroding the complement / a Minkowski sum with a
+      disk of radius <code>D</code>, taken to its polygonal limit).
+    </p>
+    <p>
+      Why this is exact: hull edge <code>V<sub>i</sub>V<sub>j</sub></code>'s outward normal <code>n&#770;</code>
+      is, by definition, perpendicular to <code>V<sub>i</sub>&minus;V<sub>j</sub></code> &mdash; which is exactly
+      the true bisector-at-infinity direction between them (Section 2). Offsetting along that edge's own normal
+      therefore encodes the correct direction <em>by construction</em>, for every edge, unconditionally &mdash;
+      there's no shared origin whose placement relative to the whole hull can go wrong. Re-derived on the
+      counterexample above: offsetting edge <code>V3V1</code> and edge <code>V1V2</code> outward and
+      intersecting gives a new vertex strictly inside <code>V1</code>'s own normal cone (the cone bounded by
+      those two edges' own outward normals), for every <code>D &gt; 0</code> &mdash; no limit needed, no failure
+      mode.
+    </p>
+    <p>
+      This is still "a suitable scaling of the convex hull" in spirit &mdash; same combinatorial skeleton, grown
+      outward without bound &mdash; just offset by a distance rather than multiplied by a factor from a point.
+      The two coincide only when the hull happens to have an inscribed circle tangent to every edge (equidistant
+      offsetting = uniform scaling about that circle's center); offsetting is the version that's correct for an
+      arbitrary hull.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>5. Segments change the picture &mdash; but less than it first appears</h2>
+    <p>
+      With segments in the input (not just isolated points), does a segment's own <em>interior</em> feature ever
+      have an unbounded cell reaching infinity, the way an endpoint can? Working through the same expansion
+      restricted to the interior feature's own validity region (the perpendicular-foot-lands-on-the-segment
+      slab): for any fixed direction <code>u</code> not <em>exactly</em> the segment's own normal, the validity
+      slab's own angular width shrinks like <code>O(1/R)</code> as <code>R&rarr;&#8734;</code> &mdash; any fixed ray eventually
+      exits it and falls back to endpoint territory. Exactly at <code>u=&plusmn;n&#770;</code> (the segment's own
+      normal, held for every <code>R</code>), the interior's own distance grows like <code>R&sup2;</code> with
+      coefficient exactly <code>1</code> (tied with any point's own leading order), and the next-order term
+      decides it: the interior wins there <em>iff that segment is itself an edge of the input's own convex
+      hull</em> (its own points have the largest projection onto <code>n&#770;</code> among all input vertices).
+    </p>
+    <p>
+      So: only hull edges that are <em>also real input segments</em> get their own sliver of the
+      boundary-at-infinity (a thin edge, not a bare tie point) &mdash; every other hull edge (implicit,
+      connecting two vertices with no direct input segment between them) is a genuine
+      <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code> tie, exactly as proposed. Concretely, for the
+      offset construction (Section 4): a hull edge that's a real segment doesn't need any special geometric
+      treatment in the offsetting itself (its offset line is exactly its own segment's own outward-offset
+      supporting line, no different from an implicit edge's) &mdash; the distinction only matters for
+      <em>labeling</em> that resulting boundary piece (as the segment's own interior reaching to infinity,
+      rather than a plain endpoint tie) and, downstream, for whether the segment's existing interior feature's
+      validity region should simply be understood to extend all the way to this new boundary rather than
+      needing any new feature invented at infinity.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>6. 3D, briefly</h2>
+    <p>
+      Section 1's argument is dimension-generic as written (nothing in the support-function expansion assumes
+      <code>N=2</code>). The generic input this project cares about needs <code>N+1</code> affinely independent
+      vertices to affinely span <code>N</code>-dimensional space at all (a non-degenerate 3D pointcloud needs
+      &ge;4 points, not &ge;3 &mdash; 3 points only ever span a plane). With that in place, the same duality
+      holds one dimension up: hull <em>vertices</em> &rarr; boundary-at-infinity 2D <em>facets</em> (each one a
+      solid angular region, labeled <code>&lt;V<sub>i</sub>,&#8734;&gt;</code>); hull <em>edges</em> &rarr;
+      boundary-at-infinity 1D <em>edges</em> (an arc of tied directions between two adjacent vertices,
+      <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code>, or a real segment's own sliver if that hull edge is
+      an input segment); hull <em>faces</em> (triangles, for a simplicial hull) &rarr; boundary-at-infinity single
+      <em>points</em> (<code>&lt;V<sub>i</sub>,V<sub>j</sub>,V<sub>k</sub>,&#8734;&gt;</code>, or a real input
+      triangle's own facet reaching to infinity, by the same argument as Section 5 one dimension up). The offset
+      construction (Section 4) generalizes unchanged: push every hull facet's supporting plane outward along its
+      own normal by a fixed distance <code>D</code> and re-intersect.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>7. Recommended implementation plan</h2>
+    <ol>
+      <li><strong>Compute the convex hull of the full input vertex set</strong> (every point feature's own
+        location and every segment's two endpoints &mdash; Section 1's second consequence means interior-only
+        geometry never contributes a new hull vertex).</li>
+      <li><strong>Build the offset polygon</strong> at a large, finite <code>D</code> (Section 4) &mdash; each
+        hull edge's supporting line pushed outward by <code>D</code> along its own outward normal, adjacent
+        offset lines intersected for the new vertices. This becomes the starting domain, replacing
+        <code>init_bbox_complex</code>'s padded rectangle.</li>
+      <li><strong>Feed it through the existing clip machinery unchanged.</strong> Because the offset polygon is,
+        by Sections 1 and 4, already exactly the correct asymptotic-winner boundary (not an approximation that
+        needs the real algorithm to "reach out" further), no new feature type or new clipping logic should be
+        needed &mdash; every existing point/segment feature's own comparison against this boundary is the same
+        comparison already implemented, just now bounded by a geometrically meaningful shape instead of an
+        arbitrary rectangle.</li>
+      <li><strong>Label the boundary elements</strong> per Sections 2 and 5 once construction finishes: each
+        boundary edge whose two neighbors are both plain vertices gets <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code>
+        at the vertex between them and <code>&lt;V<sub>i</sub>,&#8734;&gt;</code> along its own length; a hull
+        edge that's a real input segment gets its own thin labeled strip instead of a bare tie point.</li>
+    </ol>
+    <p><strong>Open questions to resolve during implementation, in picture-per-step order:</strong></p>
+    <ul>
+      <li>How large should the finite <code>D</code> be in practice? Needs to be large relative to the input's
+        own diameter for the asymptotic argument's <code>O(1)</code>/<code>O(1/R)</code> error terms to be
+        negligible, but not so large that the exact-predicate kernel's own floating-point conditioning suffers
+        (coordinates spanning many orders of magnitude in the same complex). Should be measured empirically, not
+        guessed.</li>
+      <li>Does <code>merge_adjacent_same_label_cells!</code> correctly recognize a hull vertex's own
+        <code>&lt;V<sub>i</sub>,&#8734;&gt;</code> boundary piece as belonging to the same cell as
+        <code>V<sub>i</sub></code>'s own finite territory, so the two merge into one (correctly unbounded) cell
+        rather than staying artificially split at the offset boundary?</li>
+      <li>Verify the offset-vs-scaling distinction (Section 3 vs 4) empirically on a deliberately skewed input,
+        not just algebraically &mdash; confirm the naive approach visibly misplaces a cell and the offset
+        approach doesn't.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Status</h2>
+    <p>
+      <span class="badge amber">planning only</span> nothing above is implemented yet. Next: build the hull +
+      offset-polygon construction as a standalone step (picture: the offset polygon alone, labeled, against a
+      simple points-only input), then wire it in as the new starting domain and confirm existing cases still
+      cross-validate correctly against the brute-force oracle out to the new boundary.
+    </p>
+  </div>
+
+</main>
+</body>
+</html>
