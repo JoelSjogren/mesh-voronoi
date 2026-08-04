@@ -7,6 +7,7 @@ include("geometry/types.jl")
 include("geometry/interval.jl")
 include("geometry/predicates.jl")
 include("geometry/validity.jl")
+include("geometry/convex_hull.jl")
 include("complex/cell.jl")
 include("complex/bbox.jl")
 include("algorithm/clip.jl")
@@ -34,5 +35,6 @@ export GFeature, segment_features, point_feature
 export insert_segment!, point_segment_complex, brute_force_label_segments
 export insert_own_lines!, insert_features!, insert_entry!, entry_feats, multi_complex, brute_force_label_multi, top_cell_ids, interior_sample
 export merge_adjacent_same_label_cells!, cell_bbox, boxes_touch_or_overlap, assert_label_bbox_invariant
+export convex_hull_2d, offset_polygon
 
 end # module MeshVoronoi

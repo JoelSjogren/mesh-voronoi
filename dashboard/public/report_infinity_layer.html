@@ -363,13 +363,38 @@
     </ul>
   </div>
 
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">implemented</span> Step 1 &mdash; convex hull + offset boundary, standalone</h2>
+    <div class="step" style="display:flex; gap:1.5rem; align-items:flex-start; flex-wrap:wrap;">
+      <img src="/images/report_infinity_step1.png" alt="Step 1: convex hull and offset boundary" style="width:380px; max-width:100%; border-radius:8px; border:1px solid var(--border);">
+      <div style="flex:1; min-width:260px;">
+        <p>
+          <code>convex_hull_2d</code> (Andrew's monotone chain) and <code>offset_polygon</code> (Section 4,
+          each hull edge's own supporting line pushed outward along its own normal by a fixed distance, then
+          adjacent offset lines re-intersected) are both implemented and tested, including a test that
+          reproduces the Section 3 counterexample numerically: confirms the naive scaled-vertex direction
+          really does favor the wrong input point, and that the offset construction's own new vertex doesn't
+          have that problem.
+        </p>
+        <p>
+          The picture: 8 input points (gray), their convex hull (dashed, 6 vertices <code>V1..V6</code>), and
+          the offset boundary at <code>D=6</code> (solid blue). The dotted lines from each hull vertex to its
+          own offset vertex are deliberately <em>not</em> converging to a single shared point &mdash; visual
+          confirmation this is a per-edge offset, not a scaling from one origin.
+        </p>
+      </div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Status</h2>
     <p>
-      <span class="badge amber">planning only</span> nothing above is implemented yet. Next: build the hull +
-      offset-polygon construction as a standalone step (picture: the offset polygon alone, labeled, against a
-      simple points-only input), then wire it in as the new starting domain and confirm existing cases still
-      cross-validate correctly against the brute-force oracle out to the new boundary.
+      <span class="badge good">Step 1 done</span> <span class="badge amber">next</span> label the offset
+      boundary's own edges/vertices per Sections 2 and 5 (<code>&lt;V<sub>i</sub>,&#8734;&gt;</code> /
+      <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code>, with the real-segment-hull-edge case handled
+      distinctly), then build <code>init_hull_offset_complex</code> (the offset-polygon analogue of
+      <code>init_bbox_complex</code>) and wire it in as the new starting domain, confirming existing cases
+      still cross-validate correctly against the brute-force oracle out to the new boundary.
     </p>
   </div>
 
