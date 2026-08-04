@@ -59,6 +59,16 @@
 #     bitmap font (no font file, no FreeType: a hardcoded 5x7 glyph table
 #     rasterized to a texture on the fly). Nothing about hover is printed
 #     to the terminal; only `status` (load/save/error messages) does that.
+#   - The construction's own bounded domain is not a fixed box: it's the
+#     convex hull of every vertex drawn so far, pushed outward by a small,
+#     fixed distance -- traced as a thin gray outline. A hull vertex's own
+#     territory (otherwise unbounded) reaches all the way out to this
+#     boundary, and is fully hoverable there just like any other cell/edge
+#     (a boundary edge is labeled `<Vi,∞>`; a boundary vertex where two
+#     neighboring hull vertices' territories meet is `<Vi,Vj,∞>` -- see the
+#     dashboard's "layer at infinity" report). It rebuilds itself (a brief
+#     replay of the current drawing, same as R/L below) whenever a vertex
+#     gets close enough to it to need more room.
 #   - R: refine -- cut every current segment in half at its midpoint.
 #   - S: save the current drawing as a named preset (prompts on stdin).
 #   - L: list every available preset and load one (prompts on stdin) --
@@ -80,6 +90,9 @@ using Random
 
 const CANVAS_LO = -8.0
 const CANVAS_HI = 8.0
+const HULL_OFFSET_DISTANCE = 2.0   # world units the compactified boundary sits beyond the input's own convex hull -- deliberately modest (unlike the "layer at infinity" planning report's own mult=20x-diagonal default), so it's on-screen and hoverable at typical demo zoom, not somewhere you'd have to scroll out to find.
+const HULL_MARGIN = 0.6            # once any vertex gets this close to (or past) the current offset boundary, the domain is rebuilt around a fresh hull so every point stays comfortably enclosed.
+const HULL_MAX_EXTENT = 3 * (CANVAS_HI - CANVAS_LO)   # if the input's own convex hull would need a domain this much wider than the canvas (e.g. the `benchmark` preset's point cloud, deliberately scattered far outside the visible canvas to stress construction speed rather than to be usefully diagrammed), a close-fitting hull-offset domain isn't the right shape for it -- fall back to the plain fixed-canvas bbox domain instead, exactly as before this feature existed.
 const SNAP_RADIUS = 0.4   # data units: both "close enough to reuse a vertex" and "close enough that a drag counts as a click"
 const MAX_FEATURES = 256
 const WINDOW_SIZE = 900
@@ -1037,6 +1050,81 @@ function load_presets_file()
     return presets
 end
 
+# ---------------------------------------------------------------------------
+# The "compactified" domain: instead of a fixed axis-aligned box, the
+# construction's own bounded domain is the convex hull of every vertex
+# drawn so far, pushed outward by a fixed distance (`offset_polygon` -- see
+# the "layer at infinity" planning report for why this, not a naive scalar
+# scaling, is the construction that's exact for an arbitrary hull). This is
+# what gives an otherwise-unbounded cell (a hull vertex's own territory) a
+# genuine bounded shape reaching a `<Vi,∞>`/`<Vi,Vj,∞>`-labeled edge/vertex
+# on this boundary -- no change is needed anywhere else in this file: the
+# construction (`insert_entry!`) and every rendering/hover query below
+# already work purely off `cx`/`feats`, regardless of the domain's own
+# shape (confirmed independently in `test_compactified.jl`).
+
+"""
+The domain complex to build against for the current vertex set `coords`: a
+hull-offset polygon around `coords` if one both exists (needs >= 3
+affinely independent points) and stays within `HULL_MAX_EXTENT` of the
+canvas: `nothing` as the second return value otherwise, meaning "fell back
+to the plain bbox" (too few points yet, points exactly collinear, or a
+point cloud deliberately scattered far outside the canvas like the
+`benchmark` preset). The second return value (the offset polygon's own
+vertices, or `nothing`) is what a caller keeps around both to draw the
+boundary and to later decide (`domain_margin_ok`) when it needs
+recomputing.
+"""
+function fresh_domain(coords::Vector{SVector{2,Float64}}, lo0, hi0)
+    if length(coords) >= 3
+        hull = try
+            convex_hull_2d(coords)
+        catch
+            nothing
+        end
+        if hull !== nothing
+            hlo = SVector(minimum(p[1] for p in hull), minimum(p[2] for p in hull))
+            hhi = SVector(maximum(p[1] for p in hull), maximum(p[2] for p in hull))
+            if maximum(hhi - hlo) <= HULL_MAX_EXTENT
+                offset = offset_polygon(hull, HULL_OFFSET_DISTANCE)
+                return init_hull_offset_complex(offset)[1], offset
+            end
+        end
+    end
+    return init_bbox_complex(Val(2), lo0, hi0)[1], nothing
+end
+
+"""
+Whether every point in `coords` still sits comfortably inside `offset`'s
+own boundary (at least `HULL_MARGIN` from every edge) -- `false` (meaning
+"needs a rebuild") if `offset` is `nothing` but `coords` might now support
+a genuine hull, or if any point has gotten too close to (or past) the
+current boundary.
+
+Exact for a convex polygon: a point's distance to the boundary of an
+intersection of halfplanes is the *minimum*, over every halfplane, of that
+point's own slack (`b_i - a_i·x` for outward unit normal `a_i`) -- moving
+straight toward whichever halfplane is tightest reaches the boundary in
+exactly that many units while staying inside every other halfplane the
+whole way there, and no direction can reach the boundary any sooner.
+"""
+function domain_margin_ok(coords::Vector{SVector{2,Float64}}, offset::Union{Nothing,Vector{Pt{2,Float64}}})
+    offset === nothing && return length(coords) < 3
+    n = length(offset)
+    for p in coords
+        for i in 1:n
+            a, b = offset[i], offset[mod1(i + 1, n)]
+            d = b - a
+            len = norm(d)
+            len < 1e-12 && continue
+            n̂ = SVector(d[2], -d[1]) / len
+            slack = dot(n̂, b) - dot(n̂, p)
+            slack < HULL_MARGIN && return false
+        end
+    end
+    return true
+end
+
 # Assembles all persistent state and GL objects the running app needs, and
 # returns `(window, state)`. Split out from the render loop so the
 # gesture/incremental-step logic can be exercised programmatically (see the
@@ -1048,6 +1136,7 @@ function build_app(; visible=true)
     lo0, hi0 = SVector(CANVAS_LO, CANVAS_LO), SVector(CANVAS_HI, CANVAS_HI)
     cx = init_bbox_complex(Val(2), lo0, hi0)[1]
     feats = GFeature{2}[]
+    domain_offset = Ref{Union{Nothing,Vector{Pt{2,Float64}}}}(nothing)   # the live compactified boundary's own vertices, or `nothing` while still on the plain bbox domain -- see `fresh_domain`
 
     GLFW.WindowHint(GLFW.VISIBLE, visible)
     GLFW.WindowHint(GLFW.RESIZABLE, false)
@@ -1146,6 +1235,26 @@ function build_app(; visible=true)
         end
     end
 
+    # Recomputes the compactified domain from every current vertex and
+    # replays every already-committed entry into it from scratch -- the
+    # same "reset cx/feats, replay `entries` one at a time via `step!`"
+    # pattern `load_preset!`/`refine!` already use, just triggered
+    # opportunistically (`domain_margin_ok` failing) instead of at a fixed
+    # occasion. `coords`/`entries` themselves are untouched (this rebuilds
+    # the domain the *same* drawing sits in, not the drawing itself), so
+    # vertex numbering and everything the user's already seen stays intact.
+    function rebuild_domain!()
+        new_cx, new_offset = fresh_domain(coords, lo0, hi0)
+        old_entries = copy(entries)
+        empty!(entries)
+        cx = new_cx
+        empty!(feats)
+        domain_offset[] = new_offset
+        for e in old_entries
+            step!(e)
+        end
+    end
+
     function commit_point!(pos)
         i = nearest_vertex(coords, pos)
         if i !== nothing
@@ -1156,6 +1265,7 @@ function build_app(; visible=true)
         idx = length(coords)
         try
             step!((:point, pos, idx))
+            domain_margin_ok(coords, domain_offset[]) || rebuild_domain!()
             set_status!("Added point $idx.")
         catch e
             set_status!("Error: " * sprint(showerror, e))
@@ -1179,6 +1289,7 @@ function build_app(; visible=true)
         end
         try
             step!((:segment, coords[ia], coords[ib], ia, ib))
+            domain_margin_ok(coords, domain_offset[]) || rebuild_domain!()
             set_status!("Added segment $ia-$ib.")
         catch e
             set_status!("Error: " * sprint(showerror, e))
@@ -1188,7 +1299,7 @@ function build_app(; visible=true)
     function do_clear!()
         empty!(coords)
         empty!(entries)
-        cx = init_bbox_complex(Val(2), lo0, hi0)[1]
+        cx, domain_offset[] = fresh_domain(coords, lo0, hi0)
         empty!(feats)
         set_status!("Cleared.")
         hover[] = describe_winners(GFeature{2}[])
@@ -1203,9 +1314,18 @@ function build_app(; visible=true)
     # back only that one entry rather than corrupting the whole rebuild).
     function refine!()
         old_entries = copy(entries)
+        all_coords = SVector{2,Float64}[]
+        for e in old_entries
+            if e[1] === :point
+                push!(all_coords, e[2])
+            else
+                _, pa, pb, _, _ = e
+                push!(all_coords, pa, (pa + pb) / 2, pb)
+            end
+        end
         empty!(coords)
         empty!(entries)
-        cx = init_bbox_complex(Val(2), lo0, hi0)[1]
+        cx, domain_offset[] = fresh_domain(all_coords, lo0, hi0)
         empty!(feats)
 
         for e in old_entries
@@ -1234,9 +1354,17 @@ function build_app(; visible=true)
     # adds -- so a preset is built exactly the way a user's own drawing
     # would be, just from a fixed list instead of mouse gestures.
     function load_preset!(preset, label::AbstractString)
+        all_coords = SVector{2,Float64}[]
+        for e in preset
+            if e[1] === :point
+                push!(all_coords, e[2])
+            else
+                push!(all_coords, e[2], e[3])
+            end
+        end
         empty!(coords)
         empty!(entries)
-        cx = init_bbox_complex(Val(2), lo0, hi0)[1]
+        cx, domain_offset[] = fresh_domain(all_coords, lo0, hi0)
         empty!(feats)
         for e in preset
             if e[1] === :point
@@ -1320,6 +1448,26 @@ function build_app(; visible=true)
         if points_n[] > 0
             glBindVertexArray(points_vao)
             glDrawArrays(GL_POINTS, 0, points_n[])
+            glBindVertexArray(0)
+        end
+
+        # The compactified boundary itself, traced as a thin gray outline
+        # (distinct from the solid black input geometry above) so it reads
+        # as "the domain's own edge", not something the user drew -- purely
+        # a visual aid, since the background shader already colors the
+        # region out to this boundary correctly with no help from here (see
+        # this file's own "compactified domain" section for why).
+        offset = domain_offset[]
+        if offset !== nothing
+            glUseProgram(highlight_prog)
+            hloc2(name) = glGetUniformLocation(highlight_prog, name)
+            glUniform2f(hloc2("uCanvasLo"), Float32(lo[1]), Float32(lo[2]))
+            glUniform2f(hloc2("uCanvasHi"), Float32(hi[1]), Float32(hi[2]))
+            glUniform4f(hloc2("uColor"), 0.35f0, 0.35f0, 0.35f0, 0.9f0)
+            upload!(highlight_vao, highlight_vbo, flatten2([SVector{2,Float32}(p) for p in offset]))
+            glLineWidth(Float32(w * LINE_WIDTH_FRACTION * 0.6))
+            glBindVertexArray(highlight_vao)
+            glDrawArrays(GL_LINE_LOOP, 0, length(offset))
             glBindVertexArray(0)
         end
 
@@ -1587,7 +1735,7 @@ function build_app(; visible=true)
         do_refine!, do_save_prompt!, do_load_prompt!,
         feats=(() -> feats), draw_frame!, world_pos_from_cursor, window, zoom!,
         view_lo, view_hi, view_center, view_half,
-        bg_feats=(() -> bg_feats[]), cx=(() -> cx), test_cursor_override)
+        bg_feats=(() -> bg_feats[]), cx=(() -> cx), domain_offset=(() -> domain_offset[]), test_cursor_override)
     return window, state
 end
 
