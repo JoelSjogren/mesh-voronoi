@@ -23,12 +23,12 @@ export Interval, straddles_zero, interval_contains
 export Exact, to_interval, to_exact, exact_sign, symbolic_tiebreak
 export VertexIdx, Label, CellNode, CellComplex, add_cell!, supercells, descendant_points
 export set_label!, supersede!, resolve
-export face_dim, face_specs, immediate_subface_specs, init_bbox_complex
+export face_dim, face_specs, immediate_subface_specs, init_bbox_complex, init_hull_offset_complex
 export clip_by_hyperplane!, quadric_crossing_point, edge_crossings, is_curved
 export polygon_vertices_2d, point_in_polygon_2d, in_bbox, find_containing_cell, find_hover_target, edge_distance, edge_polyline, plot_cells_2d
 export BVH, build_bvh, find_containing_cell_bvh
 export padded_bbox, two_points_complex, brute_force_label_two_points
-export insert_point!, points_complex, brute_force_label_points
+export insert_point!, points_complex, compactified_points_complex, brute_force_label_points
 export weld_near_duplicate_vertices!, weld_duplicate_edges!, fix_boundary_labels!, recompute_point_label, recompute_feature_label
 export HalfSpace, is_valid
 export GFeature, segment_features, point_feature

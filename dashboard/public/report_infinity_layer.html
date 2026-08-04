@@ -386,15 +386,51 @@
     </div>
   </div>
 
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">implemented</span> Step 2 &mdash; wired into the actual construction: the compactified complex</h2>
+    <p>
+      <code>init_hull_offset_complex</code> (the arbitrary-convex-polygon analogue of
+      <code>init_bbox_complex</code> -- trivial at <code>N=2</code>, just vertices/edges/one top face) and
+      <code>compactified_points_complex</code> (<code>points_complex</code>'s counterpart, starting from the
+      offset boundary instead of a padded rectangle) are both implemented. As predicted in Section 7, <em>no
+      change to the clip machinery itself was needed</em> -- the existing per-cell comparison logic, run
+      against this differently-shaped domain, produces the correct labeling on its own.
+    </p>
+    <div class="step" style="display:flex; gap:1.5rem; align-items:flex-start; flex-wrap:wrap;">
+      <img src="/images/report_infinity_step2_full.png" alt="Full compactified complex" style="width:380px; max-width:100%; border-radius:8px; border:1px solid var(--border);">
+      <img src="/images/report_infinity_step2_zoom.png" alt="Zoomed finite structure" style="width:380px; max-width:100%; border-radius:8px; border:1px solid var(--border);">
+      <div style="flex:1; min-width:260px;">
+        <p>
+          8 points, 2 of them (<code>P7</code>, <code>P8</code>) placed strictly <em>interior</em> to the
+          other 6's convex hull. <strong>Left:</strong> the full compactified complex out to the offset
+          boundary &mdash; exactly 6 colors visible, one unbroken wedge per hull vertex, radiating out to the
+          boundary with clean straight radial seams between them (the point-vs-point bisector is flat, as
+          expected). <strong>Right:</strong> zoomed to the finite region &mdash; the 2 interior points'
+          cells (plum, khaki) are small and fully <em>enclosed</em>, exactly the theoretical prediction
+          (Section 2: only hull vertices can have an unbounded cell) confirmed visually, not just asserted.
+        </p>
+        <p>
+          Verified three ways, not just "it renders": (1) cross-validated against the brute-force oracle at
+          2000+ points out to 95% of the boundary radius, zero mismatches; (2) every one of the 6 hull
+          vertices' own points end up with an unbounded cell and the other 2 don't, checked directly against
+          which points the complex itself ends up merging into one cell each; (3) every offset-polygon
+          vertex's own final label matches <code>argmax<sub>k</sub> u&middot;V<sub>k</sub></code> for
+          <code>u</code> = that vertex's own direction from the origin &mdash; Section 1's support-function
+          claim, checked exactly, not just plausibly.
+        </p>
+      </div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Status</h2>
     <p>
-      <span class="badge good">Step 1 done</span> <span class="badge amber">next</span> label the offset
-      boundary's own edges/vertices per Sections 2 and 5 (<code>&lt;V<sub>i</sub>,&#8734;&gt;</code> /
-      <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code>, with the real-segment-hull-edge case handled
-      distinctly), then build <code>init_hull_offset_complex</code> (the offset-polygon analogue of
-      <code>init_bbox_complex</code>) and wire it in as the new starting domain, confirming existing cases
-      still cross-validate correctly against the brute-force oracle out to the new boundary.
+      <span class="badge good">Steps 1&ndash;2 done</span> <span class="badge amber">next</span> explicit
+      <code>&lt;V<sub>i</sub>,&#8734;&gt;</code> / <code>&lt;V<sub>i</sub>,V<sub>j</sub>,&#8734;&gt;</code>
+      labeling of the boundary elements as a queryable fact (currently the boundary vertices/edges carry the
+      *correct* label already, per verification (3) above, but nothing marks them as "this is the
+      layer-at-infinity" specifically -- indistinguishable from an ordinary finite tie right now); then
+      segments (Section 5's real-hull-edge case) and, per the original ask, 3D.
     </p>
   </div>
 

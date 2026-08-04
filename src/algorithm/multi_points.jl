@@ -273,6 +273,40 @@ function points_complex(points::Vector{Pt{N,Float64}}) where {N}
 end
 
 """
+`points_complex`'s "compactified" counterpart (see the layer-at-infinity
+planning report): the starting domain is the input's own convex hull,
+offset outward by a fixed distance `D` (default: `mult` times the input's
+own bounding-box diagonal, generous enough that the boundary sits well
+outside any finite structure the construction itself produces), instead of
+`padded_bbox`'s arbitrary axis-aligned rectangle. Otherwise identical to
+`points_complex` -- same per-point incremental insertion, same labeling --
+because nothing about the construction algorithm needs to know its own
+domain is a hull offset rather than a box; see the report for why that's
+exactly the point. Needs at least 3 affinely independent points (the
+generic case this targets) for the hull itself to be well-defined; returns
+`(cx, hull, offset)` so a caller can label the boundary-at-infinity's own
+edges/vertices afterward without recomputing the hull.
+"""
+function compactified_points_complex(points::Vector{Pt{2,Float64}}; mult::Float64=20.0)
+    length(points) >= 3 || error("compactified_points_complex: need at least 3 (affinely independent) points")
+    hull = convex_hull_2d(points)
+    lo = SVector(minimum(p[1] for p in points), minimum(p[2] for p in points))
+    hi = SVector(maximum(p[1] for p in points), maximum(p[2] for p in points))
+    D = mult * max(norm(hi - lo), 1.0)
+    offset = offset_polygon(hull, D)
+    cx, top = init_hull_offset_complex(offset)
+    label1 = Label([Set([1])])
+    for id in eachindex(cx.nodes)
+        set_label!(cx, id, label1)
+    end
+    points_dict = Dict{VertexIdx,Pt{2,Float64}}(i => p for (i, p) in enumerate(points))
+    for i in 2:length(points)
+        insert_point!(cx, points_dict, i)
+    end
+    return cx, hull, offset
+end
+
+"""
 Brute-force oracle for an arbitrary number of points, generalizing
 `brute_force_label_two_points`.
 """

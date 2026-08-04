@@ -9,6 +9,7 @@ using LinearAlgebra
     include("test_predicates.jl")
     include("test_bbox.jl")
     include("test_convex_hull.jl")
+    include("test_compactified.jl")
     include("test_clip.jl")
     include("test_two_points.jl")
     include("test_supersede.jl")

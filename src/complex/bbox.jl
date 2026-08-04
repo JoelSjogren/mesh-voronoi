@@ -83,3 +83,26 @@ function init_bbox_complex(::Val{N}, lo::Pt{N,Float64}, hi::Pt{N,Float64}) where
     top_id = node_of_spec[ntuple(_ -> :free, N)]
     return cx, top_id
 end
+
+"""
+Build the face lattice of an arbitrary convex polygon `verts` (2D, in
+cyclic order -- as `offset_polygon` returns) as a fresh `CellComplex{2}`:
+one dim=0 cell per vertex, one dim=1 cell per edge (consecutive vertex
+pair), and a single dim=2 top cell referencing every edge -- the
+"compactified complex" domain-builder, the arbitrary-convex-polygon
+analogue of `init_bbox_complex`'s axis-aligned-box lattice (trivial at
+`N=2`, since a convex polygon's own face lattice has only these 3 levels,
+unlike a general `N`-cube's). All cells start unlabeled, exactly like
+`init_bbox_complex`'s -- labels are assigned the same way, once real input
+features exist to compete for them. Returns the complex and the id of its
+single top-dimensional cell.
+"""
+function init_hull_offset_complex(verts::Vector{Pt{2,Float64}})
+    n = length(verts)
+    n >= 3 || error("init_hull_offset_complex: need a genuine polygon (>= 3 vertices)")
+    cx = CellComplex{2}()
+    vertex_ids = [add_cell!(cx, 0, Label(), Int[], v) for v in verts]
+    edge_ids = [add_cell!(cx, 1, Label(), [vertex_ids[i], vertex_ids[mod1(i + 1, n)]], nothing) for i in 1:n]
+    top_id = add_cell!(cx, 2, Label(), edge_ids, nothing)
+    return cx, top_id
+end
