@@ -1194,6 +1194,21 @@ function clip_by_hyperplane!(cx::CellComplex{N}, start_id::Int, A::AffineQuadrat
         supersede!(cx, old_id, new_ids)
     end
 
+    # `a_piece`/`b_piece`'s *values* mix two genuinely different things that
+    # happen to share one dict: brand-new dim>=1 pieces this call just
+    # created (which genuinely do belong under `label_a`/`label_b`/
+    # `preserve_label`), and dim=0 *pre-existing* vertices, self-mapped
+    # (`a_piece[id] = id`) purely as side-of-`quad` bookkeeping for
+    # assembling those new pieces. The label this loop gives such a vertex
+    # is therefore only ever provisional -- correct in the common case
+    # (nothing else was ever tied there), but a vertex that's also, say, a
+    # neighbor's own boundary tie needs its *true* label recomputed from its
+    # actual position, not just this one pairwise comparison's own verdict;
+    # see `insert_point!`/`insert_features!`'s own `extra_verts` argument to
+    # `weld_near_duplicate_vertices!`, which is what actually guarantees
+    # every touched vertex ends up correct, not this assignment alone
+    # (confirmed as a real, reachable gap via random-stress testing, not
+    # just a theoretical one).
     if preserve_label === nothing
         label_a = Label([idxA])
         label_b = Label([idxB])

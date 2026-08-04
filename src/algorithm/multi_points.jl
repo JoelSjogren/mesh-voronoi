@@ -16,40 +16,66 @@ function recompute_point_label(pt::Pt{N,Float64}, points::Dict{VertexIdx,Pt{N,Fl
 end
 
 """
-Welds together any live dim=0 vertices created *during this insertion*
-(id `>= first_new_id`) that turn out to be numerically the same point --
-this can genuinely happen even though the construction is logically
-correct: both `insert_point!` (G1) and `insert_features!` (G2) clip each
-existing winner's top cell independently, so when two adjacent cells share
-a boundary edge that the new winner's bisector needs to split, *each*
-cell's clip recomputes where its own copy of that split happens using a
-*different* quadric (its own current winner vs. the new one -- not some
-single quadric tied to the shared edge itself). These two computations
-coincide only in exact arithmetic, precisely at a genuine multi-way tie
-point -- so floating-point rounding gives two distinct-but-nearly-identical
-points instead of the one true vertex.
+Recomputes the true label of every live dim=0 vertex created *during this
+insertion* (id `>= first_new_id`) directly from its own position, welding
+together any that turn out to be numerically the same point along the way.
 
-Welding matters, not just cosmetically: neither duplicate's own label (an
-artifact of whichever single clip created it) reflects the full tie a
-genuine multi-way tie point represents, so the welded vertex's true label
-is recomputed from scratch via the caller-supplied `label_fn` (either
-`recompute_point_label` or `recompute_feature_label`, generalizing over
-G1/G2 -- this function itself doesn't need to know which) rather than
-merely unioning the duplicates' own incomplete ones. Any edge left
-connecting a welded vertex to itself (a zero-length sliver, a direct side
-effect of the weld) is retired via `supersede!` with an empty replacement,
-the same way orphaned structure elsewhere in the complex is retired -- not
-a real geometric feature, and `polygon_vertices_2d`'s boundary walk works
-fine without it once both of its former neighbors resolve to the same
-shared vertex.
+Welding: this can genuinely happen even though the construction is
+logically correct -- both `insert_point!` (G1) and `insert_features!` (G2)
+clip each existing winner's top cell independently, so when two adjacent
+cells share a boundary edge that the new winner's bisector needs to split,
+*each* cell's clip recomputes where its own copy of that split happens
+using a *different* quadric (its own current winner vs. the new one -- not
+some single quadric tied to the shared edge itself). These two
+computations coincide only in exact arithmetic, precisely at a genuine
+multi-way tie point -- so floating-point rounding gives two
+distinct-but-nearly-identical points instead of the one true vertex.
 
-Scoped to only the vertices created this round (not the whole complex)
-for efficiency -- a vertex that was already live before this insertion is
-already correctly deduplicated, by this same invariant maintained after
-every prior insertion.
+Recomputing every new vertex's label (not just welded ones) matters just as
+much, and for the same underlying reason: *any* newly created vertex's own
+label -- welded or not -- is only ever an artifact of whichever single
+pairwise clip created it (which side of *that one* comparison it fell on),
+never the full tie a genuine boundary point represents. A vertex approached
+from two different cells' own independent clips gets caught by the welding
+above and corrected; a vertex approached from only *one* side never
+becomes a "duplicate" at all and would otherwise keep that single
+one-sided label forever -- confirmed as a real, reachable gap (not just a
+theoretical one) on the outer boundary of a compactified complex, where a
+tie between two hull-adjacent points is, by construction, only ever
+discovered from one interior cell's own clip (there's no "other side" cell
+past the boundary to independently produce a matching duplicate). So every
+new vertex's label is recomputed from scratch via the caller-supplied
+`label_fn` (either `recompute_point_label` or `recompute_feature_label`,
+generalizing over G1/G2 -- this function itself doesn't need to know
+which), whether or not it turned out to have a duplicate.
+
+Any edge left connecting a welded vertex to itself (a zero-length sliver, a
+direct side effect of the weld) is retired via `supersede!` with an empty
+replacement, the same way orphaned structure elsewhere in the complex is
+retired -- not a real geometric feature, and `polygon_vertices_2d`'s
+boundary walk works fine without it once both of its former neighbors
+resolve to the same shared vertex.
+
+Scoped to the vertices created this round (id `>= first_new_id`) plus
+whichever pre-existing ones the caller passes in `extra_verts` -- e.g. the
+descendants of a cell that got wholesale relabeled (a whole territory
+entirely overtaken by the new feature, `insert_point!`'s/`insert_features!`'s
+own "no split needed" shortcut) rather than actually clipped: that shortcut
+only sets the *cell's* own label, never cascading to its own vertices/edges,
+which is a real, reachable staleness bug of exactly the same shape as the
+one welding fixes for newly-created vertices -- a vertex that's genuinely
+now owned outright by the new feature otherwise keeps whatever label it had
+before, indefinitely, until *something* explicitly recomputes it. A vertex
+that's neither new nor explicitly listed here is assumed already correct
+(the invariant this function itself is responsible for maintaining, after
+every prior insertion).
 """
-function weld_near_duplicate_vertices!(cx::CellComplex{N}, first_new_id::Int, label_fn; atol=1e-9) where {N}
+function weld_near_duplicate_vertices!(cx::CellComplex{N}, first_new_id::Int, label_fn; atol=1e-9, extra_verts=Int[]) where {N}
     verts = [id for id in first_new_id:length(cx.nodes) if !haskey(cx.superseded_by, id) && cx.nodes[id].dim == 0]
+    for id in extra_verts
+        (haskey(cx.superseded_by, id) || cx.nodes[id].dim != 0 || id in verts) && continue
+        push!(verts, id)
+    end
     isempty(verts) && return nothing
 
     parent = Dict(id => id for id in verts)
@@ -75,7 +101,6 @@ function weld_near_duplicate_vertices!(cx::CellComplex{N}, first_new_id::Int, la
     end
 
     for (_, group) in groups
-        length(group) < 2 && continue
         canonical = minimum(group)
         true_label = label_fn(cx.nodes[canonical].point)
         set_label!(cx, canonical, true_label)
@@ -219,7 +244,19 @@ function insert_point!(cx::CellComplex{N}, points::Dict{VertexIdx,Pt{N,Float64}}
     end
 
     first_new_id = length(cx.nodes) + 1
+    # Every vertex touched by *any* branch below -- clipped (where
+    # `clip_by_hyperplane!`'s own dim=0 labels are only ever provisional,
+    # see its docstring) or wholesale relabeled (that branch only sets
+    # `cell_id`'s own label, never cascading to its subcells at all) -- can
+    # end up with a stale or incomplete label unless something explicitly
+    # recomputes it afterward. Collected *before* processing each cell (so
+    # the ids are captured regardless of what that cell's own clip does to
+    # it; vertex ids themselves are never superseded by a clip, only
+    # cells/edges are) and handed to `weld_near_duplicate_vertices!` below
+    # alongside its usual newly-created-vertex scope.
+    touched_verts = Int[]
     for (winner_idx, cell_id) in to_process
+        append!(touched_verts, descendant_nodes_by_dim(cx, cell_id)[1])
         A = AffineQuadratic(points[winner_idx])
         quad = bisector(A, B)
         pts = descendant_points(cx, cell_id)
@@ -237,11 +274,11 @@ function insert_point!(cx::CellComplex{N}, points::Dict{VertexIdx,Pt{N,Float64}}
     # its *own* winner-vs-new-point quadric -- these coincide only in exact
     # arithmetic (precisely at a genuine multi-way tie point), so
     # floating-point rounding can leave two near-duplicate vertices instead
-    # of the one true one, neither carrying the full tied label. Weld
-    # those, then fix any boundary whose label is now stale relative to
-    # what it actually separates -- both scoped to this round's own new
-    # nodes only.
-    weld_near_duplicate_vertices!(cx, first_new_id, pt -> recompute_point_label(pt, points))
+    # of the one true one, neither carrying the full tied label. Weld those,
+    # recompute every touched pre-existing vertex's own true label too (see
+    # `touched_verts` above), then fix any boundary whose label is now stale
+    # relative to what it actually separates.
+    weld_near_duplicate_vertices!(cx, first_new_id, pt -> recompute_point_label(pt, points); extra_verts=touched_verts)
     weld_duplicate_edges!(cx, first_new_id)
     fix_boundary_labels!(cx, first_new_id)
     # Keeps the complex's own invariant intact after every insertion: no

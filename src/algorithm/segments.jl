@@ -565,6 +565,22 @@ canonically so `n` and `-n` versions of the same plane collide).
 """
 function insert_own_lines!(cx::CellComplex{N}, new_feats::Vector{GFeature{N}}) where {N}
     seen = Set{Tuple{Pt{N,Float64},Float64}}()
+    # `clip_by_plane_preserving_label!` forces `preserve_label` onto every
+    # piece a refining cut touches, including a *pre-existing* vertex or
+    # edge that happened to lie in the cut's path -- even when it already
+    # correctly carried a genuine tie against some other, completely
+    # unrelated cell (this refinement has no way to know about that cell; it
+    # only knows the one label it's preserving). Confirmed as a real,
+    # prevalent (not rare) gap via random-stress testing of mixed
+    # point+segment input -- a large fraction of a construction's own
+    # vertices, not just an occasional one. Every dim=0 descendant of every
+    # cell touched here is collected (before touching it, so the ids are
+    # valid regardless of what the clip itself does) and returned for the
+    # caller to fold into its own broader recompute (`insert_features!`'s
+    # own `touched_verts` -- this function doesn't have the `feats_so_far`
+    # a proper recompute needs, only its caller does). Edges (dim=N-1) get
+    # the analogous fix via `fix_boundary_labels!`'s own full rescan below.
+    touched_verts = Int[]
     for f in new_feats, hs in f.validity
         n̂ = hs.n / norm(hs.n)
         dd = hs.d / norm(hs.n)
@@ -573,21 +589,16 @@ function insert_own_lines!(cx::CellComplex{N}, new_feats::Vector{GFeature{N}}) w
         key in seen && continue
         push!(seen, key)
         for cell_id in top_cell_ids(cx)
+            append!(touched_verts, descendant_nodes_by_dim(cx, cell_id)[1])
             clip_by_plane_preserving_label!(cx, cell_id, hs.n, hs.d)
         end
     end
-    # `clip_by_plane_preserving_label!` forces `preserve_label` onto every
-    # piece a refining cut touches, including a *pre-existing* boundary
-    # edge that happened to lie in the cut's path -- even when that edge
-    # already correctly carried a genuine tie against some other,
-    # completely unrelated cell (this refinement has no way to know about
-    # that cell; it only knows the one label it's preserving). A full
-    # rescan (not scoped to new nodes only, unlike the analogous cleanup in
-    # `insert_features!`/`insert_point!`) is needed here specifically
-    # because the corrupted node is often an *old* one, not one created by
-    # this call.
+    # A full rescan (not scoped to new nodes only, unlike the analogous
+    # cleanup in `insert_features!`/`insert_point!`) is needed here
+    # specifically because the corrupted node is often an *old* one, not
+    # one created by this call.
     fix_boundary_labels!(cx, 1)
-    return nothing
+    return touched_verts
 end
 
 """
@@ -647,7 +658,7 @@ function insert_features!(cx::CellComplex{N}, feats_so_far::Vector{GFeature{N}},
     # different combination of code paths than the one it was first written
     # for.
     first_new_id = length(cx.nodes) + 1
-    insert_own_lines!(cx, new_feats)
+    touched_verts = insert_own_lines!(cx, new_feats)
 
     to_process = Tuple{Int,GFeature{N},GFeature{N}}[]
     for cell_id in top_cell_ids(cx)
@@ -660,7 +671,18 @@ function insert_features!(cx::CellComplex{N}, feats_so_far::Vector{GFeature{N}},
         push!(to_process, (cell_id, cur_feat, new_feat))
     end
 
+    # Every vertex touched by *any* branch below can end up with a stale or
+    # incomplete label unless something explicitly recomputes it afterward
+    # -- see `insert_point!`'s own matching comment and
+    # `weld_near_duplicate_vertices!`'s docstring for why (in short: a
+    # clip's own dim=0 labels are only ever provisional, and the wholesale
+    # `side == :b` relabel below only ever touches `cell_id` itself, never
+    # cascading to its own subcells). Collected before processing each cell
+    # so the ids are captured regardless of what that cell's own clip does
+    # to it -- appended to `insert_own_lines!`'s own returned list, which
+    # has exactly the same kind of gap for exactly the same reason.
     for (cell_id, cur_feat, new_feat) in to_process
+        append!(touched_verts, descendant_nodes_by_dim(cx, cell_id)[1])
         quad = bisector(cur_feat.quad, new_feat.quad)
         # Not just a vertex-sign check: see `cell_uniformly_signed`'s own
         # docstring for why that alone silently misses a curved bisector
@@ -681,10 +703,11 @@ function insert_features!(cx::CellComplex{N}, feats_so_far::Vector{GFeature{N}},
     # Independently clipping each cell above (same structural pattern as
     # `insert_point!`) can leave two near-duplicate vertices at a genuine
     # multi-way tie instead of one, neither carrying the full tied label --
-    # see `weld_near_duplicate_vertices!`'s docstring. Weld those, then fix
-    # any boundary whose label is now stale relative to what it actually
-    # separates.
-    weld_near_duplicate_vertices!(cx, first_new_id, pt -> recompute_feature_label(pt, feats_so_far))
+    # see `weld_near_duplicate_vertices!`'s docstring. Weld those, recompute
+    # every touched pre-existing vertex's own true label too (`touched_verts`
+    # above), then fix any boundary whose label is now stale relative to
+    # what it actually separates.
+    weld_near_duplicate_vertices!(cx, first_new_id, pt -> recompute_feature_label(pt, feats_so_far); extra_verts=touched_verts)
     weld_duplicate_edges!(cx, first_new_id)
     fix_boundary_labels!(cx, first_new_id)
     return nothing
@@ -771,9 +794,15 @@ function insert_entry!(cx::CellComplex{N}, feats::Vector{GFeature{N}}, new_feats
         # comment): a first entry's own validity-boundary cuts can leave
         # near-duplicate vertices just like any later insertion's can, and
         # this is a real, reachable caller path (`insert_entry!`'s own
-        # first-entry branch), not just a test-only concern.
+        # first-entry branch), not just a test-only concern. Its returned
+        # `touched_verts` doesn't carry any *real* stale-label risk here
+        # specifically (every cell's own label is still empty at this point
+        # -- there's nothing yet for a preserving clip to have overwritten),
+        # but is threaded through anyway for consistency with
+        # `insert_features!`'s own handling, not because this call site is
+        # currently known to need it.
         first_new_id = length(cx.nodes) + 1
-        insert_own_lines!(cx, new_feats)
+        touched_verts = insert_own_lines!(cx, new_feats)
         for cell_id in top_cell_ids(cx)
             sample = interior_sample(cx, cell_id)
             # `first`, not `only`: a sample landing exactly on the shared
@@ -783,7 +812,7 @@ function insert_entry!(cx::CellComplex{N}, feats::Vector{GFeature{N}}, new_feats
             f = first(ff for ff in new_feats if is_valid(ff.validity, sample))
             set_label!(cx, cell_id, Label([f.face]))
         end
-        weld_near_duplicate_vertices!(cx, first_new_id, pt -> recompute_feature_label(pt, new_feats))
+        weld_near_duplicate_vertices!(cx, first_new_id, pt -> recompute_feature_label(pt, new_feats); extra_verts=touched_verts)
         weld_duplicate_edges!(cx, first_new_id)
         label_boundaries!(cx)
         append!(feats, new_feats)

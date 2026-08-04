@@ -118,3 +118,51 @@ end
     end
     @test true
 end
+
+@testset "regression: stale duplicate vertex left behind at a genuine 4-way tie" begin
+    # Inserting the four corners of a square one at a time creates the exact
+    # center point (2,2) -- equidistant from all four corners -- as a vertex
+    # twice: once (correctly labeled) from the clip that finally produces it,
+    # and once as a leftover from an earlier clip that a plain "merge
+    # near-duplicates" pass would weld into the first but never relabel,
+    # because `weld_near_duplicate_vertices!` used to skip any group with
+    # only one member (i.e. never even considered whether a *singleton*
+    # touched vertex had a stale label). Left uncorrected, `find_containing_cell`
+    # can return either the stale ({3}-only) or the correct (4-way tie) node
+    # depending on which one happens to still be live. Fixed by having
+    # `weld_near_duplicate_vertices!` recompute every touched vertex
+    # (`insert_point!`'s `extra_verts`), not just genuine duplicate groups.
+    entries = Any[
+        (:point, SVector(0.0, 0.0), 1),
+        (:point, SVector(4.0, 0.0), 2),
+        (:point, SVector(4.0, 4.0), 3),
+        (:point, SVector(0.0, 4.0), 4),
+    ]
+    cx, feats = multi_complex(entries, Val(2))
+    centers = [id for (id, n) in enumerate(cx.nodes)
+               if !haskey(cx.superseded_by, id) && n.dim == 0 && n.point ≈ SVector(2.0, 2.0)]
+    @test length(centers) == 1
+    @test cx.nodes[only(centers)].label == Set([Set([1]), Set([2]), Set([3]), Set([4])])
+end
+
+@testset "regression: insert_own_lines!'s preserve_label refinement clip doesn't cascade to old vertices" begin
+    # A segment followed by a single point: the point's own bisector against
+    # the segment clips a cell whose label is being narrowed/refined
+    # (`preserve_label`), and that clip's vertices used to get relabeled
+    # correctly -- but pre-existing vertices merely *touched* by the same
+    # clip (not newly created) kept their old, now-stale label, since
+    # `insert_own_lines!` had no way to report which vertices it had touched
+    # back to its caller. Fixed by having `insert_own_lines!` collect and
+    # return `touched_verts`, threaded into `weld_near_duplicate_vertices!`'s
+    # `extra_verts` so every touched vertex -- new or old -- gets recomputed.
+    entries = Any[
+        (:segment, SVector(2.861, 1.605), SVector(1.565, 3.18), 1, 2),
+        (:point, SVector(-0.754, 3.768), 3),
+    ]
+    cx, feats = multi_complex(entries, Val(2))
+    bad = [(id, n.point, n.label, MeshVoronoi.recompute_feature_label(n.point, feats))
+           for (id, n) in enumerate(cx.nodes)
+           if !haskey(cx.superseded_by, id) && n.dim == 0 &&
+              n.label != MeshVoronoi.recompute_feature_label(n.point, feats)]
+    @test isempty(bad)
+end
