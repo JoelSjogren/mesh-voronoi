@@ -75,6 +75,36 @@ function merge_adjacent_same_label_cells!(cx::CellComplex{N}) where {N}
 
         for comp in values(components)
             length(comp) < 2 && continue
+
+            # Two group members can, rarely, turn out to be exact
+            # duplicates of each other -- the identical *set* of subcells,
+            # not just individually adjacent -- a genuine (if not yet fully
+            # traced to its ultimate historical cause) construction defect
+            # rather than a legitimate adjacency: two distinct top cells
+            # bounded by exactly the same edges are the same region, not
+            # two regions sharing a scar to dissolve. Left as-is, every one
+            # of that duplicate's edges gets counted `>= 2` times (once per
+            # copy), which can leave *zero* `external` edges for the whole
+            # component -- not merely wrong, but fatal (`add_cell!` with no
+            # subcells at all). Collapsed here by keeping one representative
+            # per distinct subcell-set and superseding the rest directly to
+            # it, *before* the external/internal count below, so the
+            # ordinary merge logic only ever sees genuinely distinct,
+            # merely-adjacent cells.
+            seen = Dict{Set{Int},Int}()
+            deduped = Int[]
+            for id in comp
+                sig = Set(cx.nodes[id].subcells)
+                if haskey(seen, sig)
+                    supersede!(cx, id, [seen[sig]])
+                else
+                    seen[sig] = id
+                    push!(deduped, id)
+                end
+            end
+            comp = deduped
+            length(comp) < 2 && continue
+
             counts = Dict{Int,Int}()
             for id in comp, s in cx.nodes[id].subcells
                 counts[s] = get(counts, s, 0) + 1
@@ -204,10 +234,15 @@ scan, and this runs inside a check (`assert_label_bbox_invariant`) called
 after every single insertion.
 """
 function cells_area_overlap(cx::CellComplex{2}, id1::Int, id2::Int)
+    # `find_outer_loop` returns `nothing` for a cell whose own edges are
+    # entirely a dangling spike (no genuine closed cycle, hence no real
+    # area) -- such a cell can't overlap anything.
     outer_edges(id) = let loops = cyclic_boundary_walks(cx, cx.nodes[id].subcells)
-        loops[find_outer_loop(cx, loops)]
+        outer = find_outer_loop(cx, loops)
+        outer === nothing ? Tuple{Int,Int,Int}[] : loops[outer]
     end
     ew1, ew2 = outer_edges(id1), outer_edges(id2)
+    (isempty(ew1) || isempty(ew2)) && return false
     e1, e2 = [e for (e, _, _) in ew1], [e for (e, _, _) in ew2]
     for (_, v, _) in ew1
         point_in_edge_loop(cx, e2, cx.nodes[v].point) && return true
@@ -272,22 +307,30 @@ below, which is exact for a non-convex cell instead of merely a convex one.
 interior_sample(cx::CellComplex{N}, id::Int) where {N} = (pts = descendant_points(cx, id); sum(pts) / length(pts))
 
 """
-A point provably inside 2D cell `id`'s own region, even when it's
-non-convex -- unlike the plain vertex-centroid fallback above (a former bug,
-task #38: a vertex average lands outside its own cell for any sufficiently
-concave shape, which a curved bisector's arc-vs-chord bulge is only one way
-to produce -- an ordinary all-straight-edge polygon can be concave too, and
-that case was never actually covered by the fallback's reasoning). Also
-correct for a cell with a hole (task #39): `cyclic_boundary_walks` +
-`find_outer_loop` restrict to the cell's own *outer* boundary first, so a
-hole's vertices (no part of this cell's actual interior) can't pull the
-sample toward or past them.
+A point provably inside the simple polygon a single cyclic `loop` (one
+`cyclic_boundary_walks` cycle -- a cell's own outer boundary, or just as
+well a *hole*'s own loop) bounds, even when it's non-convex -- unlike a
+plain vertex-centroid average (a former bug, task #38: a vertex average
+lands outside its own cell for any sufficiently concave shape, which a
+curved bisector's arc-vs-chord bulge is only one way to produce -- an
+ordinary all-straight-edge polygon can be concave too). Factored out of
+`interior_sample` (below) so the same technique can also give
+`clip_top_cell_2d!`'s hole-placement code ("which resulting piece does this
+hole belong in?") a genuinely interior point to test, instead of an
+arbitrary vertex of the hole's own boundary -- a boundary vertex is, by
+definition, not interior to anything, and reusing one as the "is this point
+inside piece i?" sample landed it exactly on (or numerically
+indistinguishable from) that piece's own boundary too whenever the hole
+happened to touch a resulting piece's boundary near one of its own
+vertices, which `point_in_edge_loop`'s even-odd ray cast can then answer
+either way (including "outside every piece" -- confirmed as a real,
+reachable construction failure via a minimal random-stress reproduction).
 
-Exact for any simple polygon, convex or not: picks the outer loop's own
-topmost vertex (breaking a `y`-tie on `x` for a deterministic choice) --
-always a locally convex corner, since nothing can be above it -- casts a
-horizontal ray an epsilon below it (off the vertex itself, so the ray
-doesn't graze along a boundary edge), and returns the midpoint of whichever
+Exact for any simple polygon, convex or not: picks the loop's own topmost
+vertex (breaking a `y`-tie on `x` for a deterministic choice) -- always a
+locally convex corner, since nothing can be above it -- casts a horizontal
+ray an epsilon below it (off the vertex itself, so the ray doesn't graze
+along a boundary edge), and returns the midpoint of whichever
 crossing-to-crossing span straddles that vertex's own `x`. That span is the
 region just below the topmost vertex's own two incident edges, which by
 local convexity there is guaranteed interior, regardless of how the rest of
@@ -295,16 +338,14 @@ the polygon bends. Curved edges solved directly against their own stored
 quadric (`curve_crossings_at_y`/`on_arc_between`, the same exact machinery
 `point_in_edge_loop` uses), not approximated.
 """
-function interior_sample(cx::CellComplex{2}, id::Int)
-    loops = cyclic_boundary_walks(cx, cx.nodes[id].subcells)
-    outer = loops[find_outer_loop(cx, loops)]
-    verts = unique(v for (_, v, _) in outer)
+function loop_interior_point(cx::CellComplex{2}, loop::Vector{Tuple{Int,Int,Int}})
+    verts = unique(v for (_, v, _) in loop)
     pts = [cx.nodes[v].point for v in verts]
     topv = pts[argmax([(p[2], p[1]) for p in pts])]
     y0 = topv[2] - 1e-6 * max(1.0, maximum(p -> abs(p[2]), pts))
 
     xs = Float64[]
-    for (e, _, _) in outer
+    for (e, _, _) in loop
         en = cx.nodes[e]
         v1, v2 = en.subcells
         p1, p2 = cx.nodes[v1].point, cx.nodes[v2].point
@@ -321,6 +362,19 @@ function interior_sample(cx::CellComplex{2}, id::Int)
     length(xs) < 2 && return sum(pts) / length(pts)
     i = clamp(searchsortedlast(xs, topv[1]), 1, length(xs) - 1)
     return SVector((xs[i] + xs[i+1]) / 2, y0)
+end
+
+"""
+`loop_interior_point` applied to 2D cell `id`'s own *outer* loop --
+`cyclic_boundary_walks` + `find_outer_loop` restrict to it first (task #39),
+so a hole's own vertices (no part of this cell's actual interior) can't
+pull the sample toward or past them.
+"""
+function interior_sample(cx::CellComplex{2}, id::Int)
+    loops = cyclic_boundary_walks(cx, cx.nodes[id].subcells)
+    outer = find_outer_loop(cx, loops)
+    outer === nothing && error("interior_sample: cell $id has no genuine closed boundary loop at all (every one of its own edges is part of a dangling spike) -- a live top-level cell with no real enclosed area, which shouldn't happen; likely the same open construction issue as a hole independently cut by the same bisector as its container (see the hole-placement investigation notes on `clip_top_cell_2d!`)")
+    return loop_interior_point(cx, loops[outer])
 end
 
 """
@@ -680,6 +734,36 @@ This is the one piece of real incremental-insertion logic in the package
 interactive, one-at-a-time caller (e.g. a live demo), so both exercise the
 identical, already-tested code path.
 """
+# N-generic no-op: the dangling-spike/degenerate-cell situation this
+# guards against is 2D-specific (see the docstring on the N=2 method
+# below), and G1 (points-only, any N) never produces a curved or
+# multiply-connected boundary in the first place.
+retire_degenerate_cells!(cx::CellComplex{N}) where {N} = nothing
+
+"""
+Retires (supersedes with no replacement) any live top-dimensional cell
+whose own edges turn out to have *no* genuine closed boundary loop at all
+(`cyclic_boundary_walks` prunes every one of them as a dangling spike --
+`find_outer_loop` returns `nothing`) -- a cell with no real enclosed area,
+which shouldn't exist as a live top cell but can be left behind by the
+hole-placement fallback in `clip_top_cell_2d!` (see its own docstring: a
+hole independently cut by the same bisector as its container is a real,
+not-yet-fully-solved construction gap). Run once at the end of every
+`insert_entry!` call so a degenerate leftover from round `K` never survives
+to be handed to `interior_sample` (which has no sensible fallback value,
+unlike this cleanup) during round `K+1`.
+"""
+function retire_degenerate_cells!(cx::CellComplex{2})
+    for id in top_cell_ids(cx)
+        loops = cyclic_boundary_walks(cx, cx.nodes[id].subcells)
+        if find_outer_loop(cx, loops) === nothing
+            @warn "retire_degenerate_cells!: cell $id has no genuine closed boundary loop (every edge is part of a dangling spike) -- retiring it with no replacement"
+            supersede!(cx, id, Int[])
+        end
+    end
+    return nothing
+end
+
 function insert_entry!(cx::CellComplex{N}, feats::Vector{GFeature{N}}, new_feats::Vector{GFeature{N}}) where {N}
     if isempty(feats)
         # Scoped from before `insert_own_lines!` for the same reason
@@ -710,6 +794,7 @@ function insert_entry!(cx::CellComplex{N}, feats::Vector{GFeature{N}}, new_feats
     # just as an occasional cleanup: no two live, adjacent top cells ever
     # carry the same label for longer than one call.
     merge_adjacent_same_label_cells!(cx)
+    retire_degenerate_cells!(cx)
     return nothing
 end
 

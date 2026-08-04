@@ -99,49 +99,140 @@ function line_pair_factors(q::Quadric{2,Float64})
 end
 
 """
+`curve`/`edge_curve` as homogeneous 3x3 symmetric matrices, `[M b; bᵀ c]`,
+so that `[x,y,1] Q [x,y,1]ᵀ == evaluate(q, (x,y))` -- the standard conic
+representation the pencil-based fallback below (`pencil_line_candidates`)
+needs, since only in this form does "the conic through both `curve` and
+`edge_curve`'s common points" become the simple linear family `Q1 + t*Q2`.
+"""
+conic_matrix3(q::Quadric{2,Float64}) = @SMatrix [
+    q.M[1, 1] q.M[1, 2] q.b[1]
+    q.M[1, 2] q.M[2, 2] q.b[2]
+    q.b[1] q.b[2] q.c
+]
+
+"""
+The real roots of `det(Q1 + t*Q2) = 0` -- where in the pencil of conics
+through `Q1`,`Q2` a *degenerate* (rank ≤ 2) member sits (see
+`pencil_line_candidates`'s docstring for why that's useful). `det(Q1+t*Q2)`
+is a cubic in `t` (a 3x3 determinant, linear in each entry): its
+coefficients are found by sampling at 4 points and solving the resulting
+Vandermonde system directly (simpler and just as robust as expanding the
+determinant symbolically, since this is only ever evaluated at Float64
+run-time values, not needed in exact/interval form). A real cubic always
+has at least one real root; found here via its companion matrix's
+eigenvalues (a 3x3 non-symmetric `eigvals`, which `LinearAlgebra` handles
+directly) rather than a hand-rolled Cardano formula. Falls back to treating
+it as a quadratic/linear equation when the leading coefficient (`det(Q2)`)
+is itself ~0, so a `Q2` that's already degenerate on its own doesn't
+silently produce a spurious companion-matrix root at infinity.
+"""
+function pencil_real_roots(Q1::SMatrix{3,3,Float64}, Q2::SMatrix{3,3,Float64})
+    ts = (0.0, 1.0, -1.0, 2.0)
+    vals = [det(Q1 + t * Q2) for t in ts]
+    V = [ts[i]^p for i in 1:4, p in 0:3]
+    c0, c1, c2, c3 = V \ vals
+    scale = max(abs(c0), abs(c1), abs(c2), abs(c3), 1.0)
+    if abs(c3) < 1e-9 * scale
+        if abs(c2) < 1e-9 * scale
+            abs(c1) < 1e-12 * scale && return Float64[]
+            return [-c0 / c1]
+        end
+        return quadratic_roots(c2, c1, c0)
+    end
+    p2, p1, p0 = c2 / c3, c1 / c3, c0 / c3
+    companion = [0.0 0.0 -p0; 1.0 0.0 -p1; 0.0 1.0 -p2]
+    return [real(λ) for λ in eigvals(companion) if abs(imag(λ)) < 1e-6 * max(1.0, abs(λ))]
+end
+
+"""
+The line(s) (each an `(x0, t̂)` pair, ready for `line_meets_quadric`) that a
+degenerate conic `Qt` (a real 3x3 matrix already known -- or assumed -- to
+have `det(Qt) ≈ 0`) factors into: 2 lines for a genuine line pair
+(indefinite quadratic part, `is_line_pair`), 1 for a repeated line (the
+quadratic part is a rank-1 perfect square, `ℓ(x)²`, so *not* indefinite --
+`is_line_pair` alone would wrongly call this "not a line pair" and reject
+it), or 0 if `Qt` instead degenerates to a single real point or no real
+locus at all (both eigenvalues of the quadratic part nonzero and
+same-signed) -- geometrically possible for an arbitrary pencil member, just
+not one that contributes any crossing candidates.
+"""
+function degenerate_conic_lines(Qt::Quadric{2,Float64})
+    if !is_curved(Qt)
+        return [line_parametrization(Qt)]
+    end
+    if is_line_pair(Qt)
+        (x0a, t̂a), (x0b, t̂b) = line_pair_factors(Qt)
+        return [(x0a, t̂a), (x0b, t̂b)]
+    end
+    M, b, c = Qt.M, Qt.b, Qt.c
+    tr = M[1, 1] + M[2, 2]
+    half_diff = (M[1, 1] - M[2, 2]) / 2
+    spread = sqrt(half_diff^2 + M[1, 2]^2)
+    μlo, μhi = tr / 2 - spread, tr / 2 + spread
+    mscale = max(1.0, maximum(abs, M))
+    # Repeated line: exactly one eigenvalue ~0, the other real and nonzero
+    # (a rank-1 M with a definite, not indefinite, sign -- `ℓ(x)² = (n·x-d)²`
+    # expands to exactly this: `M = n nᵀ` is PSD of rank 1). Not reached at
+    # all unless `det(Qt) ≈ 0` already (guaranteed by construction, since
+    # `Qt` is only ever built at an actual root of `pencil_real_roots`), so
+    # a nonzero `μ` fully determines the line: its eigenvector `e` is `n`'s
+    # own direction (up to scale/sign), and `b = -d*n` pins down `d`.
+    if min(abs(μlo), abs(μhi)) < 1e-9 * mscale && max(abs(μlo), abs(μhi)) > 1e-9 * mscale
+        μ = abs(μlo) > abs(μhi) ? μlo : μhi
+        e = if abs(M[1, 2]) > 1e-12 * mscale
+            v = SVector(M[1, 2], μ - M[1, 1])
+            v / norm(v)
+        else
+            M[1, 1] >= M[2, 2] ? SVector(1.0, 0.0) : SVector(0.0, 1.0)
+        end
+        # `M = μ*e*eᵀ` (rank 1) forces `Qt(x) = μ*(e·x - d)²` for some `d`
+        # (matching quadratic parts pins the line's direction to `e`
+        # regardless of `μ`'s sign; matching the linear part then pins
+        # `d = -dot(b,e)/μ`) -- an `M=0` quadric proportional to `e·x - d`
+        # itself (not `Qt` -- that's rank 1, not yet the line alone),
+        # ready for the same `line_parametrization` every other linear
+        # case here already goes through.
+        d = -dot(b, e) / μ
+        return [line_parametrization(Quadric{2,Float64}(zeros(SMatrix{2,2,Float64}), e, -2d))]
+    end
+    return Tuple{Pt{2,Float64},Pt{2,Float64}}[]
+end
+
+"""
 Real intersection points of two genuinely curved quadrics with different
-`M` (`curve.M != edge_curve.M`). By the tie-boundary invariant, `edge_curve`
-always ties the current cell's own winner `f` against some neighbor `g`,
-and `curve` (the new clip) always compares that same `f` against the
-incoming feature `new` -- so both are `±bisector(f,new)`/`±bisector(f,g)`
-for some fixed pair `f`,`new` and `f`,`g` respectively, and (since a stored
-curved edge is only ever a point-vs-line bisector -- two lines always meet
-along a *straight* tie boundary instead, via `clip_by_hyperplane!`'s
-dedicated `K=N-1` vs `K=N-1` dispatch, before a curved edge is ever created)
-exactly one of `f`/`g` is a point and the other a line.
+`M` (`curve.M != edge_curve.M`). The fast paths below (`curve-edge_curve`,
+`curve+edge_curve`, `curve`/`edge_curve` alone) all rely on one assumption:
+that `edge_curve` and `curve` share a common "third feature" (the
+tie-boundary invariant -- see the project notes on it), which makes one of
+those four specific combinations collapse to a line or line pair
+algebraically. That assumption *can* be violated: an edge's own `.curve`
+field is fixed at the moment it's created (recording whichever two features
+were being compared then), but a cell's current winner can later change via
+a wholesale relabel (`insert_features!`'s `side == :b` branch, which
+overwrites the *label* only, on purpose -- the cell's actual shape hasn't
+changed, so there's nothing to reclip) without ever touching that edge. A
+later insertion comparing the cell's *new* winner against some other new
+feature can then hand `quadric_quadric_crossings` a `curve`/`edge_curve`
+pair that shares no common feature at all -- confirmed as a real,
+reachable failure (previously an outright `error`) via a minimal
+random-stress reproduction.
 
-`curve`'s sign is fixed (`insert_features!` always computes `bisector(cur_feat,
-new_feat)` with the cell's own winner first), but `edge_curve`'s is *not* --
-it was computed the same way, but potentially in an *earlier* insertion
-round where `f` played the *other* role (the newly-inserted feature being
-compared against a then-existing winner `g`), storing `bisector(g,f)` =
-`-bisector(f,g)` instead. So which of `curve - edge_curve` or `curve +
-edge_curve` equals (up to overall sign, irrelevant to a zero set)
-`bisector(g,new)` depends on a construction-history detail neither curve's
-own coefficients reveal -- both combinations are tried.
-
-Two structural sub-cases, independent of that sign ambiguity:
-  - `f` a point: `g`,`new` are the two lines. `curve`/`edge_curve` are each
-    an irreducible parabola, but the correct-sign combination of them
-    eliminates `f`'s own `|x-f|²` term algebraically, leaving exactly
-    `±(distG(x)² - distNew(x)²)` -- the same "two angle-bisector lines"
-    factorization `is_line_pair`/`clip_by_line_pair!` already exploit for
-    comparing two lines directly (or, if `g`,`new` share a direction, a
-    single line instead -- `distG(x)²-distNew(x)²` degenerates to linear
-    exactly then, same as the already-handled equal-`M` case one level up).
-  - `f` a line: `f`,`new` are the two lines, so `curve` itself is already
-    the pair of angle-bisector lines between them -- no combination needed,
-    `curve` factors directly (this one doesn't depend on `edge_curve`'s
-    sign at all, since `curve`'s own convention is always fixed).
-So: try `curve-edge_curve`, `curve+edge_curve`, then `curve` itself (and
-`edge_curve` itself, for symmetry/robustness), taking whichever first comes
-out a genuine line or line pair. Intersecting each resulting line with
-`edge_curve` (already just `line_meets_quadric`) finds every point on both
-original curves: a point on one of a line pair's own factor lines
-automatically satisfies whichever combination produced it, and combined
-with also lying on `edge_curve`, satisfies `curve` too by construction.
-Reduces what would otherwise be a general degree-4 (Bezout) quadric-quadric
-intersection to two ordinary line-vs-quadric calls.
+Handled in general via the classical conic-pencil trick instead of relying
+on that assumption: every conic `Q1 + t*Q2` in the pencil through `curve`
+(`Q1`) and `edge_curve` (`Q2`) passes through all of their real common
+points, and `det(Q1+t*Q2)` -- a cubic in `t` -- always has at least one
+real root (`pencil_real_roots`), at which `Q1+t*Q2` is a *degenerate* conic
+(`degenerate_conic_lines`): a line, a line pair, or (for a `t` that isn't
+useful) a single point/no real locus. Every line found this way is
+intersected with `edge_curve` (`line_meets_quadric`) to recover the actual
+crossing points -- the same reduction the old fast paths above already use
+for their own two specific pencil members (`t=-1`,`t=1`), just generalized
+to not need `curve`/`edge_curve` to share anything. The original fast paths
+are kept as cheap first attempts (avoiding a cubic solve in the common
+case); the pencil search is the fallback once they've all failed, trying
+every real root in turn (not just the first) since not every root's
+conic need be a usable line/line-pair.
 """
 function quadric_quadric_crossings(curve::Quadric{2,Float64}, edge_curve::Quadric{2,Float64}, p1::Pt{2,Float64}, p2::Pt{2,Float64}; strict::Bool=false)
     diff = Quadric{2,Float64}(curve.M - edge_curve.M, curve.b - edge_curve.b, curve.c - edge_curve.c)
@@ -152,6 +243,12 @@ function quadric_quadric_crossings(curve::Quadric{2,Float64}, edge_curve::Quadri
             return line_meets_quadric(x0, t̂, edge_curve, p1, p2; strict=strict)
         end
     end
+    dedup(pts) = let out = Pt{2,Float64}[]
+        for p in pts
+            any(q -> norm(p - q) < 1e-9 * max(1.0, norm(p)), out) || push!(out, p)
+        end
+        out
+    end
     factor_source = if is_line_pair(diff)
         diff
     elseif is_line_pair(sum_)
@@ -161,16 +258,24 @@ function quadric_quadric_crossings(curve::Quadric{2,Float64}, edge_curve::Quadri
     elseif is_line_pair(edge_curve)
         edge_curve
     else
-        error("quadric_quadric_crossings: none of curve, edge_curve, or curve±edge_curve is a genuine line/line-pair -- outside the cases this codebase's feature model can structurally produce")
+        nothing
     end
-    (x0a, t̂a), (x0b, t̂b) = line_pair_factors(factor_source)
-    pts = vcat(line_meets_quadric(x0a, t̂a, edge_curve, p1, p2; strict=strict),
-        line_meets_quadric(x0b, t̂b, edge_curve, p1, p2; strict=strict))
-    out = Pt{2,Float64}[]
-    for p in pts
-        any(q -> norm(p - q) < 1e-9 * max(1.0, norm(p)), out) || push!(out, p)
+    if factor_source !== nothing
+        (x0a, t̂a), (x0b, t̂b) = line_pair_factors(factor_source)
+        return dedup(vcat(line_meets_quadric(x0a, t̂a, edge_curve, p1, p2; strict=strict),
+            line_meets_quadric(x0b, t̂b, edge_curve, p1, p2; strict=strict)))
     end
-    return out
+
+    Q1, Q2 = conic_matrix3(curve), conic_matrix3(edge_curve)
+    pts = Pt{2,Float64}[]
+    for t in pencil_real_roots(Q1, Q2)
+        Qt = Q1 + t * Q2
+        qt = Quadric{2,Float64}(SMatrix{2,2,Float64}(Qt[1, 1], Qt[2, 1], Qt[1, 2], Qt[2, 2]), SVector(Qt[1, 3], Qt[2, 3]), Qt[3, 3])
+        for (x0, t̂) in degenerate_conic_lines(qt)
+            append!(pts, line_meets_quadric(x0, t̂, edge_curve, p1, p2; strict=strict))
+        end
+    end
+    return dedup(pts)
 end
 
 """
@@ -552,10 +657,40 @@ cycle and fail on the rest (a real, previously-uncaught construction bug --
 see the malformed-cycle investigation), this repeats the single-cycle walk
 on whatever edges remain unused after each cycle closes, collecting every
 one it finds.
+
+`edges` can also contain a genuine "dangling tip" -- a chain of one or more
+edges hanging off an otherwise-closed cycle at a vertex with no other live
+incident edge in this set at all (confirmed, via a minimal random-stress
+reproduction, to be reachable: a construction-history detail this file
+doesn't fully trace elsewhere in the complex leaves such a stub referenced
+by a cell's own `subcells` even though nothing else ever closes the loop
+back through it). Such a spike is dropped before walking, not treated as an
+error: a dangling appendage encloses no area on its own (it can't
+contribute to a simple cycle by definition -- a true simple cycle visits
+every vertex exactly twice), so silently excluding it from the returned
+loops is the geometrically correct answer, not merely a tolerated
+approximation of one. Pruning is iterative (removing one spike's own edge
+can unmask another, shorter one behind it, e.g. a two-edge dangling chain)
+and applied before the single-cycle walk below, which is otherwise
+unchanged and still errors on any *other* reason a walk might fail to
+close (a genuine topology bug elsewhere, not a plain dangling tip).
 """
 function cyclic_boundary_walks(cx::CellComplex{2}, edges::Vector{Int})
-    n = length(edges)
-    edge_verts = [(cx.nodes[e].subcells[1], cx.nodes[e].subcells[2]) for e in edges]
+    live = collect(edges)
+    while true
+        degree = Dict{Int,Int}()
+        for e in live
+            v1, v2 = cx.nodes[e].subcells
+            degree[v1] = get(degree, v1, 0) + 1
+            degree[v2] = get(degree, v2, 0) + 1
+        end
+        dangling = [e for e in live if any(v -> degree[v] == 1, cx.nodes[e].subcells)]
+        isempty(dangling) && break
+        live = [e for e in live if e ∉ dangling]
+    end
+
+    n = length(live)
+    edge_verts = [(cx.nodes[e].subcells[1], cx.nodes[e].subcells[2]) for e in live]
     used = falses(n)
     loops = Vector{Tuple{Int,Int,Int}}[]
     for start in 1:n
@@ -585,7 +720,7 @@ function cyclic_boundary_walks(cx::CellComplex{2}, edges::Vector{Int})
         for idx in order
             a, b = edge_verts[idx]
             from, to = (a == walk_vertex) ? (a, b) : (b, a)
-            push!(out, (edges[idx], from, to))
+            push!(out, (live[idx], from, to))
             walk_vertex = to
         end
         push!(loops, out)
@@ -628,8 +763,15 @@ Which of `loops` (`cyclic_boundary_walks`' output, 2 or more -- a cell with
 at least one hole) is the *outer* boundary rather than a hole: the one with
 the largest bounding-box area, since a hole is by definition strictly
 enclosed within its containing loop's own extent, hence strictly smaller.
+
+Returns `nothing` if `loops` is empty -- reachable when every one of a
+cell's own edges turns out to be part of a dangling spike with no genuine
+closed cycle at all (`cyclic_boundary_walks` prunes all of them), meaning
+this "cell" encloses no real area. Callers that assume a cell always has an
+outer loop must check for this explicitly.
 """
 function find_outer_loop(cx::CellComplex{2}, loops::Vector{Vector{Tuple{Int,Int,Int}}})
+    isempty(loops) && return nothing
     function loop_bbox_area(w)
         pts = [cx.nodes[v].point for (_, v, _) in w]
         lo = reduce((a, b) -> min.(a, b), pts)
@@ -801,7 +943,7 @@ function clip_top_cell_2d!(cx::CellComplex{2}, start_id::Int, quad::Quadric{2,Fl
         if arc_curve !== nothing && is_line_pair(quad)
             p_first, p_last = cx.nodes[first_v].point, cx.nodes[last_v].point
             same_line_arc_endpoints(quad, p_first, p_last) ||
-                error("clip_by_hyperplane!: bisector is a genuine pair of two distinct lines (a line-vs-line comparison), and this run's own two cut points lie on *different* lines of that pair -- connecting them with a single curved edge would be wrong (there is no single line through them that stays on the bisector); handling this properly needs treating the two lines as two separate flat clips, not yet implemented")
+                error("clip_by_hyperplane!: bisector is a genuine pair of two distinct lines (a line-vs-line comparison), and this run's own two cut points lie on *different* lines of that pair -- connecting them with a single curved edge would be wrong (there is no single line through them that stays on the bisector). This should be structurally unreachable: `clip_by_hyperplane!` dispatches every genuine K=N-1 vs K=N-1 (line-vs-line) comparison to `clip_by_line_pair!` before `quad` is ever computed here (confirmed never hit across the full test suite or extensive random-stress testing), so reaching this line at all means that dispatch invariant has been violated elsewhere -- an internal bug to fix at the source, not a case to special-case here.")
         end
         arc_id = add_cell!(cx, 1, Label(), [last_v, first_v]; curve=arc_curve)
         push!(extra_cut, arc_id)
@@ -810,9 +952,30 @@ function clip_top_cell_2d!(cx::CellComplex{2}, start_id::Int, quad::Quadric{2,Fl
 
     run_extra_edges = [Int[] for _ in runs]
     for hw in hole_walks
-        sample_pt = cx.nodes[hw[1][2]].point
+        sample_pt = loop_interior_point(cx, hw)
         ri = findfirst(i -> point_in_edge_loop(cx, vcat([p[2] for p in runs[i]], arc_ids[i]), sample_pt), eachindex(runs))
-        ri === nothing && error("clip_top_cell_2d!: a hole in start_id=$start_id's territory doesn't land inside any of the $(length(runs)) resulting piece(s) -- shouldn't happen for a well-formed multiply-connected cell")
+        if ri === nothing
+            # Can genuinely happen, not just an exact-predicate/rounding
+            # near-miss: a hole is itself a separate live top cell, so it
+            # can (in the same insertion round) be independently cut by
+            # the very same bisector splitting its container here -- the
+            # "carried through unchanged" assumption this function's own
+            # docstring already flags as unproven. When that happens,
+            # `hw` reflects the hole's *pre*-cut boundary, which may no
+            # longer land cleanly inside any post-cut piece. Rather than
+            # abort construction over a topology question this function
+            # isn't set up to resolve properly (that needs deferring
+            # reattachment until every cell this round has finished being
+            # clipped, a larger restructuring than a local fix), fall back
+            # to the run whose bounding-box center is nearest the hole's
+            # own -- a reasonable best-effort placement, not a guess in
+            # the dark, and warn so this is visible rather than silent.
+            hole_pts = [cx.nodes[v].point for (_, v, _) in hw]
+            hole_center = sum(hole_pts) / length(hole_pts)
+            run_center(run) = sum(vcat([cx.nodes[p[3]].point for p in run], [cx.nodes[p[4]].point for p in run])) / (2 * length(run))
+            ri = argmin([norm(run_center(run) - hole_center) for run in runs])
+            @warn "clip_top_cell_2d!: a hole in start_id=$start_id's territory didn't land cleanly inside any of the $(length(runs)) resulting piece(s) (likely independently cut by this same insertion -- see the hole-placement investigation notes) -- falling back to the nearest piece by bounding-box center"
+        end
         append!(run_extra_edges[ri], [e for (e, _, _) in hw])
     end
 

@@ -14,4 +14,5 @@ using LinearAlgebra
     include("test_multi_points.jl")
     include("test_segments.jl")
     include("test_tie_boundary.jl")
+    include("test_stress_regressions.jl")
 end
