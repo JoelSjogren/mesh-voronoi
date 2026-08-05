@@ -921,10 +921,18 @@ end
 # already makes clear this is a label; spelling that out in the text too
 # is just noise. Wraps onto multiple lines once there'd be more than a
 # couple of tied faces, rather than growing one line arbitrarily wide.
-function compact_label(label::Label; max_line_chars::Int=28)
+#
+# `at_infinity` appends a literal "oo" part (the bitmap font in this file
+# has no "∞" glyph, and the user asked for it by that name) when the
+# hovered vertex/edge is a genuine compactified-boundary element -- see
+# `point_on_boundary`, which is what a caller uses to decide this; nothing
+# about `label` itself (just a set of input-feature index sets) can tell
+# the difference between "<Vi,∞>" and plain old "<Vi>" on its own.
+function compact_label(label::Label; max_line_chars::Int=28, at_infinity::Bool=false)
     isempty(label) && return ""
     faces = sort([sort(collect(f)) for f in label])
     parts = [compact_face(Set(f)) for f in faces]
+    at_infinity && push!(parts, "oo")
     lines = String[]
     cur = "{"
     for (i, p) in enumerate(parts)
@@ -1123,6 +1131,34 @@ function domain_margin_ok(coords::Vector{SVector{2,Float64}}, offset::Union{Noth
         end
     end
     return true
+end
+
+"""
+Whether `p` sits on `offset`'s own boundary (on one of its edges, not just
+its infinite supporting line -- `t` is clamped to the edge's own `[0,1]`
+range with a little slack). This is what the hover text below uses to
+decide whether a vertex/edge actually *is* a `<Vi,∞>`/`<Vi,Vj,∞>`
+compactified-boundary element, as opposed to an ordinary interior
+tie/cell that merely happens to be near it -- `feats` itself has no
+notion of "the boundary" at all (it's not one of the input features), so
+this geometric check against the live `offset` polygon is the only way to
+tell the two apart.
+"""
+function point_on_boundary(offset::Union{Nothing,Vector{Pt{2,Float64}}}, p::SVector{2,Float64}; tol=1e-6)
+    offset === nothing && return false
+    n = length(offset)
+    for i in 1:n
+        a, b = offset[i], offset[mod1(i + 1, n)]
+        d = b - a
+        len2 = sum(abs2, d)
+        len2 < 1e-12 && continue
+        len = sqrt(len2)
+        n̂ = SVector(d[2], -d[1]) / len
+        abs(dot(n̂, p) - dot(n̂, b)) > tol && continue
+        t = dot(p - a, d) / len2
+        (-tol <= t <= 1 + tol) && return true
+    end
+    return false
 end
 
 # Assembles all persistent state and GL objects the running app needs, and
@@ -1535,7 +1571,29 @@ function build_app(; visible=true)
         # indicates where the cursor is regardless.
         if !isempty(hover_idx)
             label = Label(Set(feats[i].face for i in hover_idx))
-            text = compact_label(label)
+            # Whether the hovered target is itself a compactified-boundary
+            # element (see `point_on_boundary`'s own docstring) -- an edge
+            # only counts if *both* its endpoints are on the boundary (a
+            # bisector edge that merely happens to touch the boundary at
+            # one end, e.g. right where it's clipped by it, is still an
+            # ordinary interior edge, not a boundary one). Wrapped in the
+            # same defensive style as the `C<id>=`/mindist lookup just
+            # below: `.subcells` on a malformed cell is a debugging aid, not
+            # load-bearing, so a failure here just means no "oo" this frame
+            # rather than taking the render loop down with it.
+            at_infinity = false
+            try
+                if hover_kind === :vertex
+                    at_infinity = point_on_boundary(domain_offset[], cx.nodes[hover_target_id].point)
+                elseif hover_kind === :edge
+                    v1, v2 = cx.nodes[hover_target_id].subcells
+                    at_infinity = point_on_boundary(domain_offset[], cx.nodes[v1].point) &&
+                                  point_on_boundary(domain_offset[], cx.nodes[v2].point)
+                end
+            catch e
+                e isa ErrorException || rethrow()
+            end
+            text = compact_label(label; at_infinity=at_infinity)
             # The actual hovered subcell (vertex/edge/cell), found the same
             # thickness-aware way `hover_idx` was -- needed both for
             # `mindist` (a property of that subcell's own geometry, not of
