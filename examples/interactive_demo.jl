@@ -61,14 +61,18 @@
 #     to the terminal; only `status` (load/save/error messages) does that.
 #   - The construction's own bounded domain is not a fixed box: it's the
 #     convex hull of every vertex drawn so far, pushed outward by a small,
-#     fixed distance -- traced as a thin gray outline. A hull vertex's own
+#     fixed distance -- traced as a thin white outline. A hull vertex's own
 #     territory (otherwise unbounded) reaches all the way out to this
 #     boundary, and is fully hoverable there just like any other cell/edge
 #     (a boundary edge is labeled `<Vi,∞>`; a boundary vertex where two
 #     neighboring hull vertices' territories meet is `<Vi,Vj,∞>` -- see the
-#     dashboard's "layer at infinity" report). It rebuilds itself (a brief
-#     replay of the current drawing, same as R/L below) whenever a vertex
-#     gets close enough to it to need more room.
+#     dashboard's "layer at infinity" report). Its own hover box shows
+#     "D=oo" there instead of a specific distance, since that distance is
+#     only ever this demo's own rendering choice, not a geometric fact
+#     about the diagram. It rebuilds itself (a brief replay of the current
+#     drawing, same as R/L below) whenever the input's own true convex hull
+#     actually changes -- exactly recomputed and compared, not guessed at
+#     via a margin, so a new point becoming a hull vertex is never missed.
 #   - R: refine -- cut every current segment in half at its midpoint.
 #   - S: save the current drawing as a named preset (prompts on stdin).
 #   - L: list every available preset and load one (prompts on stdin) --
@@ -91,7 +95,6 @@ using Random
 const CANVAS_LO = -8.0
 const CANVAS_HI = 8.0
 const HULL_OFFSET_DISTANCE = 2.0   # world units the compactified boundary sits beyond the input's own convex hull -- deliberately modest (unlike the "layer at infinity" planning report's own mult=20x-diagonal default), so it's on-screen and hoverable at typical demo zoom, not somewhere you'd have to scroll out to find.
-const HULL_MARGIN = 0.6            # once any vertex gets this close to (or past) the current offset boundary, the domain is rebuilt around a fresh hull so every point stays comfortably enclosed.
 const HULL_MAX_EXTENT = 3 * (CANVAS_HI - CANVAS_LO)   # if the input's own convex hull would need a domain this much wider than the canvas (e.g. the `benchmark` preset's point cloud, deliberately scattered far outside the visible canvas to stress construction speed rather than to be usefully diagrammed), a close-fitting hull-offset domain isn't the right shape for it -- fall back to the plain fixed-canvas bbox domain instead, exactly as before this feature existed.
 const SNAP_RADIUS = 0.4   # data units: both "close enough to reuse a vertex" and "close enough that a drag counts as a click"
 const MAX_FEATURES = 256
@@ -1080,8 +1083,7 @@ to the plain bbox" (too few points yet, points exactly collinear, or a
 point cloud deliberately scattered far outside the canvas like the
 `benchmark` preset). The second return value (the offset polygon's own
 vertices, or `nothing`) is what a caller keeps around both to draw the
-boundary and to later decide (`domain_margin_ok`) when it needs
-recomputing.
+boundary and to later tell (`offsets_equal`) whether it's gone stale.
 """
 function fresh_domain(coords::Vector{SVector{2,Float64}}, lo0, hi0)
     if length(coords) >= 3
@@ -1103,34 +1105,27 @@ function fresh_domain(coords::Vector{SVector{2,Float64}}, lo0, hi0)
 end
 
 """
-Whether every point in `coords` still sits comfortably inside `offset`'s
-own boundary (at least `HULL_MARGIN` from every edge) -- `false` (meaning
-"needs a rebuild") if `offset` is `nothing` but `coords` might now support
-a genuine hull, or if any point has gotten too close to (or past) the
-current boundary.
+Whether two offset polygons (each `fresh_domain`'s own second return
+value) are the same, up to floating-point noise.
 
-Exact for a convex polygon: a point's distance to the boundary of an
-intersection of halfplanes is the *minimum*, over every halfplane, of that
-point's own slack (`b_i - a_i·x` for outward unit normal `a_i`) -- moving
-straight toward whichever halfplane is tightest reaches the boundary in
-exactly that many units while staying inside every other halfplane the
-whole way there, and no direction can reach the boundary any sooner.
+This is deliberately an *exact* structural comparison, not a "how close is
+close enough" margin check: an earlier version of this file only checked
+whether every current vertex stayed some fixed distance inside the
+existing boundary, which misses the actual failure mode entirely -- a new
+point can become a genuine new *hull* vertex (changing the true convex
+hull's own shape) while still landing comfortably inside the old,
+now-stale offset polygon's padding, so no margin check ever fires. The
+only reliable way to know the domain needs rebuilding is to recompute the
+hull fresh and check whether it's actually different, which is exactly
+what a caller does with this (`fresh_domain(coords,...)` vs. the offset
+currently in use) -- confirmed against the `stalecmpct` preset, which
+reproduced exactly this staleness under the old margin-only check.
 """
-function domain_margin_ok(coords::Vector{SVector{2,Float64}}, offset::Union{Nothing,Vector{Pt{2,Float64}}})
-    offset === nothing && return length(coords) < 3
-    n = length(offset)
-    for p in coords
-        for i in 1:n
-            a, b = offset[i], offset[mod1(i + 1, n)]
-            d = b - a
-            len = norm(d)
-            len < 1e-12 && continue
-            n̂ = SVector(d[2], -d[1]) / len
-            slack = dot(n̂, b) - dot(n̂, p)
-            slack < HULL_MARGIN && return false
-        end
-    end
-    return true
+function offsets_equal(a::Union{Nothing,Vector{Pt{2,Float64}}}, b::Union{Nothing,Vector{Pt{2,Float64}}}; tol=1e-9)
+    a === nothing && return b === nothing
+    b === nothing && return false
+    length(a) == length(b) || return false
+    all(norm(x - y) < tol for (x, y) in zip(a, b))
 end
 
 """
@@ -1271,24 +1266,61 @@ function build_app(; visible=true)
         end
     end
 
-    # Recomputes the compactified domain from every current vertex and
-    # replays every already-committed entry into it from scratch -- the
-    # same "reset cx/feats, replay `entries` one at a time via `step!`"
-    # pattern `load_preset!`/`refine!` already use, just triggered
-    # opportunistically (`domain_margin_ok` failing) instead of at a fixed
-    # occasion. `coords`/`entries` themselves are untouched (this rebuilds
-    # the domain the *same* drawing sits in, not the drawing itself), so
-    # vertex numbering and everything the user's already seen stays intact.
-    function rebuild_domain!()
+    # Recomputes the compactified domain fresh from every current vertex,
+    # and -- only if it actually differs from the one currently in use
+    # (`offsets_equal`; see its own docstring for why an exact recompute-
+    # and-compare, not a margin check, is what's needed here) -- rebuilds:
+    # replays every already-committed entry into the new domain from
+    # scratch, the same "reset cx/feats, replay `entries` one at a time via
+    # `step!`" pattern `load_preset!`/`refine!` already use. `coords`/
+    # `entries` themselves are untouched (this rebuilds the domain the
+    # *same* drawing sits in, not the drawing itself), so vertex numbering
+    # and everything the user's already seen stays intact. Cheap enough to
+    # call after every single add (recomputing a convex hull of a
+    # click-driven point count is trivial) that there's no reason not to
+    # just always check, rather than trying to cleverly predict when it's
+    # needed.
+    #
+    # Re-inserting the *same* entries that already built successfully once
+    # can still fail here, into a differently-shaped domain -- confirmed by
+    # stress testing right after this rebuild-on-hull-change fix landed:
+    # the same already-known "1 interior crossing" construction gap this
+    # file's docstring already documents can trigger on the new domain even
+    # though it didn't on the old one. Left alone, a failure partway
+    # through the replay loop would leave `cx`/`entries` only partially
+    # rebuilt -- worse than the domain simply staying one step behind, so
+    # this backs everything out to the pre-rebuild-attempt state on failure
+    # (the newest entry, the reason a rebuild was attempted at all, is
+    # already safely committed to that old state from before this function
+    # was even called) and reports it (returning a note string a caller
+    # appends to its own success status, rather than calling `set_status!`
+    # here directly -- that would just get overwritten by the caller's own
+    # subsequent "Added ..." message before anyone ever saw it).
+    function rebuild_domain_if_stale!()
         new_cx, new_offset = fresh_domain(coords, lo0, hi0)
+        offsets_equal(new_offset, domain_offset[]) && return nothing
         old_entries = copy(entries)
+        old_cx = cx
+        old_feats = copy(feats)
+        old_offset = domain_offset[]
         empty!(entries)
         cx = new_cx
         empty!(feats)
         domain_offset[] = new_offset
-        for e in old_entries
-            step!(e)
+        try
+            for e in old_entries
+                step!(e)
+            end
+        catch e
+            cx = old_cx
+            empty!(feats)
+            append!(feats, old_feats)
+            empty!(entries)
+            append!(entries, old_entries)
+            domain_offset[] = old_offset
+            return "(boundary resize skipped: " * sprint(showerror, e) * ")"
         end
+        return nothing
     end
 
     function commit_point!(pos)
@@ -1297,18 +1329,32 @@ function build_app(; visible=true)
             set_status!("Point $i already exists here -- ignored.")
             return
         end
+        n0 = length(coords)
         push!(coords, pos)
         idx = length(coords)
         try
             step!((:point, pos, idx))
-            domain_margin_ok(coords, domain_offset[]) || rebuild_domain!()
-            set_status!("Added point $idx.")
+            note = rebuild_domain_if_stale!()
+            set_status!(note === nothing ? "Added point $idx." : "Added point $idx. $note")
         catch e
+            # `step!` already rolls `cx`/`feats` back to before this attempt
+            # on failure, but it doesn't touch `coords` -- that's pushed to
+            # *before* the try block (needed for `idx` above), so without
+            # this a failed attempt leaves a "ghost" coordinate that was
+            # never actually incorporated into `entries`/`cx`/`feats` at
+            # all. Harmless on its own (nothing reads plain `coords` for
+            # anything but `nearest_vertex` snapping), but it directly
+            # breaks `fresh_domain`'s own correctness once it's used for the
+            # compactified boundary (it would size the domain around a
+            # point that was never actually drawn) -- confirmed via stress
+            # testing right after landing that feature.
+            resize!(coords, n0)
             set_status!("Error: " * sprint(showerror, e))
         end
     end
 
     function commit_segment!(pos_a, pos_b)
+        n0 = length(coords)
         ia = nearest_vertex(coords, pos_a)
         if ia === nothing
             push!(coords, pos_a)
@@ -1320,14 +1366,17 @@ function build_app(; visible=true)
             ib = length(coords)
         end
         if ia == ib
+            resize!(coords, n0)
             set_status!("Drag start/end resolved to the same vertex -- ignored.")
             return
         end
         try
             step!((:segment, coords[ia], coords[ib], ia, ib))
-            domain_margin_ok(coords, domain_offset[]) || rebuild_domain!()
-            set_status!("Added segment $ia-$ib.")
+            note = rebuild_domain_if_stale!()
+            set_status!(note === nothing ? "Added segment $ia-$ib." : "Added segment $ia-$ib. $note")
         catch e
+            # See `commit_point!`'s own comment on the same pattern.
+            resize!(coords, n0)
             set_status!("Error: " * sprint(showerror, e))
         end
     end
@@ -1487,7 +1536,7 @@ function build_app(; visible=true)
             glBindVertexArray(0)
         end
 
-        # The compactified boundary itself, traced as a thin gray outline
+        # The compactified boundary itself, traced as a thin white outline
         # (distinct from the solid black input geometry above) so it reads
         # as "the domain's own edge", not something the user drew -- purely
         # a visual aid, since the background shader already colors the
@@ -1499,7 +1548,7 @@ function build_app(; visible=true)
             hloc2(name) = glGetUniformLocation(highlight_prog, name)
             glUniform2f(hloc2("uCanvasLo"), Float32(lo[1]), Float32(lo[2]))
             glUniform2f(hloc2("uCanvasHi"), Float32(hi[1]), Float32(hi[2]))
-            glUniform4f(hloc2("uColor"), 0.35f0, 0.35f0, 0.35f0, 0.9f0)
+            glUniform4f(hloc2("uColor"), 1.0f0, 1.0f0, 1.0f0, 0.9f0)
             upload!(highlight_vao, highlight_vbo, flatten2([SVector{2,Float32}(p) for p in offset]))
             glLineWidth(Float32(w * LINE_WIDTH_FRACTION * 0.6))
             glBindVertexArray(highlight_vao)
@@ -1618,8 +1667,20 @@ function build_app(; visible=true)
             try
                 if hover_kind !== nothing
                     text = "C" * string(hover_target_id) * "=" * text
-                    mindist = subcell_mindist(cx, feats, hover_kind, hover_target_id)
-                    text *= "\nD=" * string(round(mindist, digits=3))
+                    if at_infinity
+                        # `subcell_mindist`'s actual number here would just be
+                        # "how far away `HULL_OFFSET_DISTANCE` happens to put
+                        # this particular boundary point" -- a demo rendering
+                        # choice, not a geometric fact about the diagram. "oo"
+                        # is the honest answer: this cell's own true tie
+                        # extends arbitrarily far in this direction; the
+                        # boundary is only where this demo chose to cut it
+                        # off, not where the distance runs out.
+                        text *= "\nD=oo"
+                    else
+                        mindist = subcell_mindist(cx, feats, hover_kind, hover_target_id)
+                        text *= "\nD=" * string(round(mindist, digits=3))
+                    end
                 end
             catch e
                 e isa ErrorException || rethrow()
