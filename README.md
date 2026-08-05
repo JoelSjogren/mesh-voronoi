@@ -53,17 +53,33 @@ populated as a byproduct of the same recursion.
   level cross-validation against a brute-force oracle (zero mismatches
   across several point counts) and a genuine 8-way tie at a cube's exact
   center resolving to one correctly-labeled vertex.
-- **3D with curved bisector surfaces (segments, planes) is not built
-  yet** — this is where the real new work is. Inserting a bisector
-  *surface* (`k=2`) means finding its own trace on the existing 2-skeleton
-  (a face-by-face walk, each face split along the trace curve, mirroring
-  `clip_top_cell_2d!`'s own 2D boundary walk one dimension up), which in
-  turn means intersecting two quadric *surfaces* into a space curve — a
-  new geometric primitive this codebase doesn't have yet — and then
-  capping the resulting cut boundary with an actual patch of the bisector
-  surface, which has no 2D analogue at all (closing a 2D cut is just one
-  new arc; closing a 3D cut is a real surface-patching problem). See
-  `triangulation-difficulties.md` for related notes.
+- **3D points + line segments works, within a stated v1 scope**
+  (`insert_segment!` at `N=3`): a segment's own interior feature is a
+  genuinely curved quadric surface even in 3D (not just `N=2`), so this
+  needed the actual new machinery — `clip_top_cell_3d!`/
+  `clip_flat_face_3d!` walk a 3D cell's own 2-skeleton (faces), restrict
+  the bisector to each flat face's own local 2D frame
+  (`restrict_to_plane`), reuse the existing, already-proven 2D
+  curved-edge machinery there, and cap the resulting cut with a new
+  curved face — the 3D analogue of `clip_top_cell_2d!`'s own 2D boundary
+  walk, one dimension up. Verified with vertex-level cross-validation
+  (zero mismatches) across several point+segment configurations and a
+  60-trial random stress run (0 failures beyond the stated scope limits
+  below, out of 56 successful trials). v1 scope, deliberately: every face
+  touched must be flat (an already-curved face, e.g. a cap left by an
+  earlier insertion, can't be split further yet), with no holes, and
+  crossed at exactly 0 or 2 points total per face (a single connected
+  cut — the 3D analogue of a curved bisector crossing one edge twice,
+  already handled at `N=2`, isn't supported yet at `N=3`). Every one of
+  these errors loudly rather than being silently mishandled.
+- **3D with curved bisector *planes* (triangles) is not built yet** — the
+  next real jump in difficulty. A triangle's own interior feature (`k=2`)
+  gives a bisector whose intersection with an existing face is no longer
+  reducible to the 2D case the same way a line's is; intersecting two
+  quadric *surfaces* in full generality (not just one flat face against
+  one already-proven-2D-reducible bisector) is a new geometric primitive
+  this codebase doesn't have yet. See `triangulation-difficulties.md` for
+  related notes.
 - **Out of scope for now**: exact coincidences (e.g. exact right-angle
   junctions) — the generic-case assumption is deliberate for v1; see the
   `house_exact` case in the dev dashboard for a live example kept around on

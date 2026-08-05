@@ -675,7 +675,7 @@ and applied before the single-cycle walk below, which is otherwise
 unchanged and still errors on any *other* reason a walk might fail to
 close (a genuine topology bug elsewhere, not a plain dangling tip).
 """
-function cyclic_boundary_walks(cx::CellComplex{2}, edges::Vector{Int})
+function cyclic_boundary_walks(cx::CellComplex{N}, edges::Vector{Int}) where {N}
     live = collect(edges)
     while true
         degree = Dict{Int,Int}()
@@ -780,6 +780,99 @@ function find_outer_loop(cx::CellComplex{2}, loops::Vector{Vector{Tuple{Int,Int,
         return d[1] * d[2]
     end
     return argmax([loop_bbox_area(w) for w in loops])
+end
+
+"""
+Restricts `Quadric{N,Float64}` `q` to the 2D plane `{origin + u*e1 + v*e2}`
+(`e1`,`e2` orthonormal), returning the `Quadric{2,Float64}` such that
+`evaluate(restrict_to_plane(q,...), (u,v)) == evaluate(q, origin+u*e1+v*e2)`
+exactly, for every `(u,v)`.
+
+This is the one new primitive `N=3` curved bisectors need that `N=2` never
+did: a 2D "edge" is already, by itself, a 1-dimensional subset of the
+*same* 2D ambient space `Quadric{2}` describes, so a single quadric
+equation fully pins down its shape. A 3D *face* is a 2-dimensional subset
+of 3D space -- one `Quadric{3}` equation alone describes a *surface*, not
+the face's own bounded 2D shape -- so finding where another bisector
+crosses a (flat) face means first re-expressing that bisector *within*
+the face's own 2D plane, where the existing, already-proven 2D
+crossing-finding machinery (`edge_crossings`, `edge_strict_interior_crossings`,
+etc.) applies unchanged.
+
+Derived by substituting `x = origin + u*e1 + v*e2` into
+`evaluate(q,x) = xᵀMx + 2bᵀx + c` and collecting terms in `u`,`v`: the
+quadratic part comes from `e_i·(M·e_j)`, the linear part from
+`e_i·(M·origin + b)`, and the constant term is exactly `evaluate(q, origin)`
+(since setting `u=v=0` must reproduce `q` at `origin` itself).
+"""
+function restrict_to_plane(q::Quadric{N,Float64}, origin::Pt{N,Float64}, e1::Pt{N,Float64}, e2::Pt{N,Float64}) where {N}
+    Mo_plus_b = q.M * origin + q.b
+    M2 = SMatrix{2,2,Float64}(dot(e1, q.M * e1), dot(e1, q.M * e2), dot(e1, q.M * e2), dot(e2, q.M * e2))
+    b2 = SVector(dot(e1, Mo_plus_b), dot(e2, Mo_plus_b))
+    c2 = evaluate(q, origin)
+    return Quadric{2,Float64}(M2, b2, c2)
+end
+
+"""
+An orthonormal `(origin, e1, e2)` frame for the flat plane spanned by
+`verts` (at least 3 non-collinear points, as a flat face's own boundary
+vertices always are) -- `origin` is `verts[1]`, `e1` the unit direction to
+the first other vertex not coincident with it, `e2` the Gram-Schmidt
+remainder of the first vertex not collinear with `e1`. Errors if every
+vertex is collinear (or coincident) with the first -- a degenerate
+"face" with no genuine 2D extent, which shouldn't reach here.
+"""
+function flat_face_frame(verts::Vector{Pt{N,Float64}}) where {N}
+    origin = verts[1]
+    e1 = nothing
+    for v in verts[2:end]
+        d = v - origin
+        if norm(d) > 1e-9
+            e1 = d / norm(d)
+            break
+        end
+    end
+    e1 === nothing && error("flat_face_frame: every vertex coincides with the first -- no genuine face here")
+    e2 = nothing
+    for v in verts[2:end]
+        d = v - origin
+        perp = d - dot(d, e1) * e1
+        if norm(perp) > 1e-9 * max(1.0, norm(d))
+            e2 = perp / norm(perp)
+            break
+        end
+    end
+    e2 === nothing && error("flat_face_frame: every vertex is collinear with the first two -- no genuine 2D face here")
+    return origin, e1, e2
+end
+
+"""
+Whether any face (dim=2) of 3D cell `cell_id`, or any of *those* faces' own
+boundary edges (dim=1), is already curved -- the two dimensions `curve`
+can ever be set at for `N=3` (never dim=0 vertices, never the dim=3 cell
+itself). Used to decide whether a clip needs `clip_top_cell_3d!` at all:
+a cell whose own faces are all flat *and* whose faces' own edges are all
+straight is exactly the "no curvature anywhere nearby" case the original,
+already-proven-correct general-purpose dim-by-dim loop already handles
+correctly (confirmed via extensive stress testing before any curved
+bisector existed in this codebase at all) -- routing it through the newer,
+much less battle-tested 3D machinery instead would be pure added risk for
+no benefit. A flat face can still have an already-curved *edge* (shared
+with a sibling top cell whose own independent clip curved it first, via
+the same "a shared boundary is already patched by the time a later cell
+is examined" mechanism `insert_features!`'s docstring describes for `N=2`)
+-- checked explicitly here rather than assumed away, since that's exactly
+the scenario `clip_top_cell_3d!` exists to handle correctly.
+"""
+function cell_has_any_curve_3d(cx::CellComplex{3}, cell_id::Int)
+    for f in cx.nodes[cell_id].subcells
+        fnode = cx.nodes[f]
+        fnode.curve === nothing || return true
+        for e in fnode.subcells
+            cx.nodes[e].curve === nothing || return true
+        end
+    end
+    return false
 end
 
 """
@@ -1015,6 +1108,210 @@ function clip_top_cell_2d!(cx::CellComplex{2}, start_id::Int, quad::Quadric{2,Fl
 end
 
 """
+Clips one *flat* 3D face `face_id` by ambient bisector `quad`, restricted
+to this face's own plane (`restrict_to_plane`) -- the 3D analogue of one
+edge's own processing inside `clip_top_cell_2d!`, one dimension up.
+
+v1 scope, deliberately: the face must itself be flat (`curve === nothing`
+-- splitting an already-curved face, e.g. a cap left by an earlier
+insertion, isn't supported yet), have exactly one boundary loop (no
+holes), and be crossed at exactly 0 or 2 points *total* across its own
+boundary (a single connected cut -- multi-crossing within one face, the
+3D analogue of the 2D "bite" case `clip_top_cell_2d!` itself now handles,
+isn't supported yet either). Every one of these violates loudly
+(`error`), never silently mishandled.
+
+Returns `(results, trace_edge_id, extra_a, extra_b, pending)`: `results`
+is `Vector{Tuple{Bool,Int}}`, mirroring `clip_top_cell_2d!`'s own contract
+(length 1, reusing `face_id`, if nothing changed; length 2 if split);
+`trace_edge_id` is the new curved (`curve = quad`) edge if this face was
+split (`nothing` otherwise) -- the caller collects these across every face
+of the enclosing 3D cell into the new capping face's own boundary;
+`extra_a`/`extra_b` are every new dim<=2 piece (edge halves, face halves)
+needing that side's label; `pending` is this call's own edge and (if
+split) face supersessions, for the caller to append to its own list.
+
+`edge_cache` (keyed by the *original* edge id, before any split) is shared
+across every face of the same enclosing 3D cell (`clip_top_cell_3d!`'s own
+per-cell call): a box edge is generically shared by exactly two faces, and
+if each independently re-split it on its own, the two faces' own cut
+points at that shared location would end up as two different `cx`
+vertices a ULP apart rather than one -- exactly the "independent
+processing creates a near-duplicate" failure mode `weld_near_duplicate_vertices!`
+exists to clean up elsewhere, except here it's avoidable outright: the
+second face to reach a given edge reuses the first face's own cut vertex
+and edge pieces instead of creating its own. Confirmed as a real, not
+theoretical, bug: splitting a fresh box by a single flat plane failed
+outright before this cache existed (the four collected trace edges never
+shared a vertex pairwise, so `cyclic_boundary_walks` found zero closed
+loops instead of one).
+"""
+function clip_flat_face_3d!(cx::CellComplex{3}, face_id::Int, quad::Quadric{3,Float64}, a_piece::Dict{Int,Int}, b_piece::Dict{Int,Int}, edge_cache::Dict{Int,NTuple{3,Int}})
+    fnode = cx.nodes[face_id]
+    fnode.curve === nothing || error("clip_flat_face_3d!: face $face_id is already curved -- splitting an already-curved face isn't supported yet (v1 scope)")
+
+    floops = cyclic_boundary_walks(cx, fnode.subcells)
+    length(floops) == 1 || error("clip_flat_face_3d!: face $face_id has $(length(floops)) boundary loops -- holes aren't supported yet (v1 scope)")
+    walk = floops[1]
+
+    verts_in_order = [cx.nodes[v].point for (_, v, _) in walk]
+    origin, e1, e2 = flat_face_frame(verts_in_order)
+    quad2 = restrict_to_plane(quad, origin, e1, e2)
+    to_local(p) = SVector(dot(p - origin, e1), dot(p - origin, e2))
+
+    extra_a = Int[]
+    extra_b = Int[]
+    pending = Tuple{Int,Vector{Int}}[]
+    trace_verts = Int[]
+    flat = Tuple{Bool,Int,Int,Int}[]
+
+    for (e, fv, tv) in walk
+        enode = cx.nodes[e]
+        # A boundary edge of a *flat* face is not always straight itself:
+        # this same face may have been reached, whole, as the *other* side
+        # of a shared boundary a sibling top cell's own independent clip
+        # already split (`supersede!` patches every parent's own subcells
+        # in place, this face's included, whenever that happens -- see
+        # `insert_features!`'s own docstring on why "a shared boundary is
+        # already patched by the time a later cell is examined" is exactly
+        # the existing, relied-upon behavior here too). Its own curve, if
+        # any, is `enode.curve` (a `Quadric{3}`, the *other* bisector that
+        # created it) -- restricted to *this* face's own local frame (the
+        # same reduction `quad` itself already goes through), reusing the
+        # already-proven 2D curved-edge machinery (`edge_curve_crossings`)
+        # rather than needing a separate 3D-specific path.
+        edge_curve2 = enode.curve === nothing ? nothing : restrict_to_plane(enode.curve, origin, e1, e2)
+        p1id, p2id = enode.subcells[1], enode.subcells[2]
+        p1, p2 = cx.nodes[p1id].point, cx.nodes[p2id].point
+        lp1, lp2 = to_local(p1), to_local(p2)
+        s1, s2 = haskey(a_piece, p1id), haskey(a_piece, p2id)
+
+        if s1 == s2
+            edge_curve_has_interior_crossing(quad2, lp1, lp2, edge_curve2) &&
+                error("clip_flat_face_3d!: edge $e has an interior crossing while both endpoints agree on side -- multi-crossing within a single face isn't supported yet (v1 scope: at most one connected cut per face)")
+            pieces = [(s1, e, p1id, p2id)]
+        else
+            if haskey(edge_cache, e)
+                cut, pid1, pid2 = edge_cache[e]
+            else
+                local_crossings = edge_curve_crossings(quad2, lp1, lp2, edge_curve2)
+                length(local_crossings) == 1 || error("clip_flat_face_3d!: edge $e has $(length(local_crossings)) crossings (expected exactly 1, since its two endpoints disagree)")
+                u, v = only(local_crossings)
+                x = origin + u * e1 + v * e2
+                cut = add_cell!(cx, 0, Label(), Int[], x)
+                # The two new pieces stay on `enode`'s own curve (if any),
+                # unchanged -- splitting an edge doesn't change *which*
+                # bisector it lies on, only where it's now bounded.
+                pid1 = add_cell!(cx, 1, Label(), [p1id, cut]; curve=enode.curve)
+                pid2 = add_cell!(cx, 1, Label(), [cut, p2id]; curve=enode.curve)
+                push!(pending, (e, [pid1, pid2]))
+                edge_cache[e] = (cut, pid1, pid2)
+            end
+            push!(trace_verts, cut)
+            pieces = [(s1, pid1, p1id, cut), (s2, pid2, cut, p2id)]
+        end
+        for (is_a, pid, _, _) in pieces
+            push!(is_a ? extra_a : extra_b, pid)
+        end
+        append!(flat, fv == p1id ? pieces : [(is_a, pid, to, from) for (is_a, pid, from, to) in reverse(pieces)])
+    end
+
+    if isempty(trace_verts)
+        side = flat[1][1]
+        all(p -> p[1] == side, flat) ||
+            error("clip_flat_face_3d!: face $face_id's own edges disagree on side despite finding no crossing anywhere -- a genuine inconsistency, not something this function knows how to resolve")
+        return [(side, face_id)], nothing, extra_a, extra_b, pending
+    end
+
+    length(trace_verts) == 2 ||
+        error("clip_flat_face_3d!: face $face_id has $(length(trace_verts)) total crossing points -- v1 scope only supports exactly 2 (a single connected cut)")
+
+    trace_edge = add_cell!(cx, 1, Label(), trace_verts; curve=(is_curved(quad) ? quad : nothing))
+
+    # Cut the face's own cyclic edge-piece sequence into its two same-side
+    # runs at the single side-change point -- the same idea as
+    # `clip_top_cell_2d!`'s own multi-run cutting, specialized to exactly
+    # one cut (so exactly one side-change forward and one back).
+    n = length(flat)
+    start_idx = findfirst(i -> flat[i][1] != flat[mod1(i - 1, n)][1], 1:n)
+    ordered = [flat[mod1(start_idx + k, n)] for k in 0:n-1]
+    side1 = ordered[1][1]
+    run1 = [p for p in ordered if p[1] == side1]
+    run2 = [p for p in ordered if p[1] != side1]
+    a_run, b_run = side1 ? (run1, run2) : (run2, run1)
+
+    a_id = add_cell!(cx, 2, Label(), vcat([p[2] for p in a_run], trace_edge))
+    b_id = add_cell!(cx, 2, Label(), vcat([p[2] for p in b_run], trace_edge))
+    push!(extra_a, a_id)
+    push!(extra_b, b_id)
+    push!(pending, (face_id, [a_id, b_id]))
+
+    return [(true, a_id), (false, b_id)], trace_edge, extra_a, extra_b, pending
+end
+
+"""
+`clip_by_hyperplane!`'s `N=3` replacement for the general-purpose
+per-subcell dictionary assembly, walking `start_id`'s own 2-skeleton
+(faces) via `clip_flat_face_3d!` and capping the resulting cut with a new
+curved face -- the 3D analogue of `clip_top_cell_2d!`, one dimension up
+(that one walks a cell's own 1-skeleton and caps with a curved *edge*;
+this walks a cell's own 2-skeleton and caps with a curved *face*).
+
+v1 scope (inherited from `clip_flat_face_3d!`, plus one more of its own):
+every face must be flat, crossed at most once (0 or 2 points), with no
+holes; and the trace edges collected across every split face must stitch
+into exactly one closed boundary loop (the cap's own boundary) -- a
+multiply-connected cut (the 3D analogue of a hole) isn't supported yet.
+
+Returns `(results, extra_a, extra_b, extra_cut, pending)`, exactly
+`clip_top_cell_2d!`'s own contract, one dimension up.
+"""
+function clip_top_cell_3d!(cx::CellComplex{3}, start_id::Int, quad::Quadric{3,Float64}, a_piece::Dict{Int,Int}, b_piece::Dict{Int,Int})
+    orig_faces = cx.nodes[start_id].subcells
+    extra_a = Int[]
+    extra_b = Int[]
+    extra_cut = Int[]
+    pending = Tuple{Int,Vector{Int}}[]
+    cap_edges = Int[]
+    a_faces = Int[]
+    b_faces = Int[]
+    edge_cache = Dict{Int,NTuple{3,Int}}()
+
+    for f in orig_faces
+        face_results, trace_edge, fa, fb, fpending = clip_flat_face_3d!(cx, f, quad, a_piece, b_piece, edge_cache)
+        append!(extra_a, fa)
+        append!(extra_b, fb)
+        append!(pending, fpending)
+        trace_edge === nothing || push!(cap_edges, trace_edge)
+        for (is_a, fid) in face_results
+            push!(is_a ? a_faces : b_faces, fid)
+        end
+    end
+
+    if isempty(cap_edges)
+        (isempty(a_faces) || isempty(b_faces)) ||
+            error("clip_top_cell_3d!: no face was split, yet both sides are represented among $start_id's own faces -- a genuine inconsistency")
+        is_a = !isempty(a_faces)
+        return [(is_a, start_id)], extra_a, extra_b, extra_cut, pending
+    end
+
+    cap_loops = cyclic_boundary_walks(cx, cap_edges)
+    length(cap_loops) == 1 ||
+        error("clip_top_cell_3d!: the collected trace edges form $(length(cap_loops)) boundary loops instead of one -- multiply-connected cuts aren't supported yet (v1 scope)")
+
+    cap_id = add_cell!(cx, 2, Label(), cap_edges; curve=(is_curved(quad) ? quad : nothing))
+    push!(extra_cut, cap_id)
+
+    a_id = add_cell!(cx, 3, Label(), vcat(a_faces, cap_id))
+    b_id = add_cell!(cx, 3, Label(), vcat(b_faces, cap_id))
+    push!(extra_a, a_id)
+    push!(extra_b, b_id)
+    push!(pending, (start_id, [a_id, b_id]))
+
+    return [(true, a_id), (false, b_id)], extra_a, extra_b, extra_cut, pending
+end
+
+"""
 All descendants of `start_id`, grouped by dimension (index `dim+1`),
 including `start_id` itself -- the scope a single hyperplane clip should
 touch, as opposed to the whole complex. Generalizes the pristine-bbox case
@@ -1137,8 +1434,10 @@ function clip_by_hyperplane!(cx::CellComplex{N}, start_id::Int, A::AffineQuadrat
         end
     end
 
-    if N == 2 && cx.nodes[start_id].dim == 2
-        results, ea, eb, ec, pending = clip_top_cell_2d!(cx, start_id, quad, a_piece, b_piece)
+    use_3d_path = N == 3 && cx.nodes[start_id].dim == 3 && (is_curved(quad) || cell_has_any_curve_3d(cx, start_id))
+    if (N == 2 && cx.nodes[start_id].dim == 2) || use_3d_path
+        results, ea, eb, ec, pending = N == 2 ? clip_top_cell_2d!(cx, start_id, quad, a_piece, b_piece) :
+                                        clip_top_cell_3d!(cx, start_id, quad, a_piece, b_piece)
         append!(pending_supersessions, pending)
         append!(extra_a, ea)
         append!(extra_b, eb)
