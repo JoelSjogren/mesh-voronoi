@@ -73,6 +73,13 @@
 #     drawing, same as R/L below) whenever the input's own true convex hull
 #     actually changes -- exactly recomputed and compared, not guessed at
 #     via a margin, so a new point becoming a hull vertex is never missed.
+#     The region strictly outside this boundary fades to white -- it's the
+#     dual, in the "one-point compactification" sense, of the single new
+#     point that construction adds: not any particular input feature's
+#     territory stretched further out, so it isn't colored like one, and
+#     hovering it (or hovering anywhere at all before there's enough input
+#     to form a boundary in the first place -- an empty diagram's own
+#     compactification is itself empty) also just says "D=oo".
 #   - R: refine -- cut every current segment in half at its midpoint.
 #   - S: save the current drawing as a named preset (prompts on stdin).
 #   - L: list every available preset and load one (prompts on stdin) --
@@ -98,6 +105,8 @@ const HULL_OFFSET_DISTANCE = 2.0   # world units the compactified boundary sits 
 const HULL_MAX_EXTENT = 3 * (CANVAS_HI - CANVAS_LO)   # if the input's own convex hull would need a domain this much wider than the canvas (e.g. the `benchmark` preset's point cloud, deliberately scattered far outside the visible canvas to stress construction speed rather than to be usefully diagrammed), a close-fitting hull-offset domain isn't the right shape for it -- fall back to the plain fixed-canvas bbox domain instead, exactly as before this feature existed.
 const SNAP_RADIUS = 0.4   # data units: both "close enough to reuse a vertex" and "close enough that a drag counts as a click"
 const MAX_FEATURES = 256
+const MAX_BOUNDARY = 32   # cap on the compactified boundary's own vertex count the shader/uniform upload can carry -- generous for a click-driven convex hull; a hull with more vertices than this just silently stops fading past the first MAX_BOUNDARY edges, no error.
+const BOUNDARY_FADE_DISTANCE = 2.0   # world units past the compactified boundary over which the diagram's own color fades fully to white -- see the "region outside the compactification is the dual of the point at infinity" note near `point_outside_boundary`.
 const WINDOW_SIZE = 900
 const POINT_SIZE_FRACTION = 0.0056   # of framebuffer width, e.g. ~5px at WINDOW_SIZE=900
 const LINE_WIDTH_FRACTION = 0.0052   # of framebuffer width, e.g. ~5px at WINDOW_SIZE=900 -- almost as thick as the point marker, still visibly under it
@@ -178,6 +187,7 @@ const BG_FRAGMENT_SRC = """
 #version 330 core
 #define MAX_FEATURES $(MAX_FEATURES)
 #define MAX_HOVER 8
+#define MAX_BOUNDARY $(MAX_BOUNDARY)
 in vec2 frag_uv;
 out vec4 fragment_color;
 
@@ -194,6 +204,21 @@ uniform float uLoD[MAX_FEATURES];
 uniform vec2 uHiN[MAX_FEATURES];
 uniform float uHiD[MAX_FEATURES];
 uniform vec3 uColor[MAX_FEATURES];
+
+// The compactified boundary, as a set of halfplane constraints (outward
+// unit normal + offset: a pixel is *inside* the bounded domain iff
+// `dot(n_i,x) <= d_i` for every `i`) -- the same halfplane representation
+// `point_on_boundary`/`offsets_equal` already use on the CPU side, moved
+// here so the fade below can run per pixel. `uBoundaryCount == 0` means
+// there is no compactified domain at all yet (fewer than 3 vertices
+// drawn, or they're collinear) -- the "compactification of the empty set
+// is the empty set" case, where *everything* on screen counts as outside
+// it (see `point_outside_boundary`'s own docstring for the CPU-side
+// counterpart of this same rule).
+uniform int uBoundaryCount;
+uniform vec2 uBoundaryN[MAX_BOUNDARY];
+uniform float uBoundaryD[MAX_BOUNDARY];
+uniform float uFadeDistance;
 
 // Hover highlighting is computed right here, per pixel, against the same
 // feature list the diagram itself is drawn from -- deliberately *not* by
@@ -290,6 +315,25 @@ bool in_hover_bound(vec2 x) {
     return t >= -slack && t <= 1.0 + slack;
 }
 
+// How far `x` sits outside the compactified boundary, in world units --
+// <= 0 means inside (or on) it. `uBoundaryCount == 0` (no compactified
+// domain exists yet) reports every point as maximally outside, since the
+// compactification of the empty set is itself empty: there is no bounded
+// region *to* be inside. Otherwise this is the largest of the boundary's
+// own per-halfplane violations (`dot(n_i,x) - d_i`) -- an approximation
+// of the true Euclidean distance to the convex boundary near a corner
+// (same character as the `feature_dist`/gradient estimate above), which
+// is all a smooth visual fade needs.
+float boundary_violation(vec2 x) {
+    if (uBoundaryCount == 0) return 1e30;
+    float v = -1e30;
+    for (int i = 0; i < MAX_BOUNDARY; i++) {
+        if (i >= uBoundaryCount) break;
+        v = max(v, dot(uBoundaryN[i], x) - uBoundaryD[i]);
+    }
+    return v;
+}
+
 void main() {
     vec2 x = uCanvasLo + frag_uv * (uCanvasHi - uCanvasLo);
     float best = 1e30;
@@ -308,23 +352,19 @@ void main() {
         }
         if (v < best) { best = v; bestI = i; }
     }
-    if (bestI < 0) {
-        fragment_color = vec4(1.0, 1.0, 1.0, 1.0);
-        return;
-    }
     // Both sides of a segment's own interior are genuinely the same cell
     // (its label/face carries no side information -- see the project's own
     // sub/super-cell duality notes), so, unlike an earlier version of this
     // shader, they're not shaded differently here: doing so would visually
     // imply a boundary that doesn't actually exist in the underlying
     // complex.
-    vec3 base = uColor[bestI];
+    vec3 base = (bestI < 0) ? vec3(1.0, 1.0, 1.0) : uColor[bestI];
 
-    if (uHoverCount == 1) {
+    if (bestI >= 0 && uHoverCount == 1) {
         if (bestI == uHoverIdx[0]) {
             base = mix(base, uHoverColor, 0.35);
         }
-    } else if (uHoverCount >= 2) {
+    } else if (bestI >= 0 && uHoverCount >= 2) {
         bool in_set = false;
         for (int k = 0; k < uHoverCount; k++) {
             if (bestI == uHoverIdx[k]) in_set = true;
@@ -373,6 +413,16 @@ void main() {
             }
         }
     }
+
+    // The region outside the compactified boundary is the dual of the
+    // "point at infinity" added by one-point compactification -- not any
+    // particular input feature's territory stretched further out, so it
+    // isn't colored like one. Faded to white over `uFadeDistance` rather
+    // than a hard cutoff, so the boundary itself (already drawn as its own
+    // outline overlay) reads as a soft edge, not a jarring one.
+    float fade = clamp(boundary_violation(x) / uFadeDistance, 0.0, 1.0);
+    base = mix(base, vec3(1.0, 1.0, 1.0), fade);
+
     fragment_color = vec4(base, 1.0);
 }
 """
@@ -593,6 +643,39 @@ function set_hover_uniforms!(prog, hover_idx::Vector{Int}, thickness::Float64, c
     a, b = bound === nothing ? (Pt{2,Float64}(0.0, 0.0), Pt{2,Float64}(0.0, 0.0)) : bound
     glUniform2f(loc("uHoverBoundA"), Float32(a[1]), Float32(a[2]))
     glUniform2f(loc("uHoverBoundB"), Float32(b[1]), Float32(b[2]))
+end
+
+"""
+Uploads the compactified boundary as the halfplane constraints
+`boundary_violation` (in `BG_FRAGMENT_SRC`) checks per pixel -- `offset ===
+nothing` (no valid hull-offset domain yet) uploads `uBoundaryCount = 0`,
+which that function already treats as "everywhere is outside" (see its own
+docstring). Mirrors `point_on_boundary`'s halfplane construction exactly,
+so the shader's notion of "inside" can never disagree with the CPU-side
+one used for hover/rebuild decisions.
+"""
+function set_boundary_uniforms!(prog, offset::Union{Nothing,Vector{Pt{2,Float64}}}, fade_distance::Float64)
+    loc(name) = glGetUniformLocation(prog, name)
+    glUniform1f(loc("uFadeDistance"), Float32(fade_distance))
+    if offset === nothing
+        glUniform1i(loc("uBoundaryCount"), Int32(0))
+        return
+    end
+    m = length(offset)
+    n = min(m, MAX_BOUNDARY)
+    ns = SVector{2,Float32}[]
+    ds = Float32[]
+    for i in 1:n
+        a, b = offset[i], offset[mod1(i + 1, m)]
+        d = b - a
+        len = norm(d)
+        n̂ = SVector(d[2], -d[1]) / len
+        push!(ns, SVector{2,Float32}(n̂))
+        push!(ds, Float32(dot(n̂, b)))
+    end
+    glUniform1i(loc("uBoundaryCount"), Int32(n))
+    glUniform2fv(loc("uBoundaryN"), n, flatten2(ns))
+    glUniform1fv(loc("uBoundaryD"), n, ds)
 end
 
 function gen_vao_vbo()
@@ -1156,6 +1239,36 @@ function point_on_boundary(offset::Union{Nothing,Vector{Pt{2,Float64}}}, p::SVec
     return false
 end
 
+"""
+Whether world point `p` lies strictly outside the compactified boundary
+`offset` -- `true` unconditionally when `offset` is `nothing`, since the
+compactification of the empty set (no hull-offset domain exists yet --
+fewer than 3 vertices drawn, or they're collinear) is itself empty: there
+is no bounded region to be inside of at all.
+
+This is the CPU-side counterpart of `boundary_violation` in
+`BG_FRAGMENT_SRC`, used to decide the hover text (`draw_hover_highlights!`
+shows "D=oo" out here, the same "dual of the one point added by one-point
+compactification" idea the shader's own fade-to-white paints) -- kept as
+its own function, rather than reusing `point_on_boundary`'s edge-by-edge
+loop, because the two questions ("is `p` *on* an edge" vs. "is `p` outside
+*any* halfplane at all") are genuinely different despite sharing the same
+halfplane construction.
+"""
+function point_outside_boundary(offset::Union{Nothing,Vector{Pt{2,Float64}}}, p::SVector{2,Float64})
+    offset === nothing && return true
+    n = length(offset)
+    for i in 1:n
+        a, b = offset[i], offset[mod1(i + 1, n)]
+        d = b - a
+        len2 = sum(abs2, d)
+        len2 < 1e-12 && continue
+        n̂ = SVector(d[2], -d[1]) / sqrt(len2)
+        dot(n̂, p) - dot(n̂, b) > 0 && return true
+    end
+    return false
+end
+
 # Assembles all persistent state and GL objects the running app needs, and
 # returns `(window, state)`. Split out from the render loop so the
 # gesture/incremental-step logic can be exercised programmatically (see the
@@ -1483,7 +1596,14 @@ function build_app(; visible=true)
         # both agree on the identical answer.
         pos = world_pos_from_cursor()
         thickness = EDGE_HOVER_THICKNESS_FRACTION * view_half[]
-        hover_idx = hover_winner_indices(feats, pos, thickness)
+        # Strictly outside the compactified boundary (or no boundary exists
+        # at all yet) is the dual of the point at infinity, not a stretched-
+        # out territory belonging to whichever feature is technically
+        # nearest -- so there's no real "cell" out there for the shader to
+        # tint or for the hover text to describe in the usual way; see
+        # `point_outside_boundary`'s own docstring.
+        hover_is_infinity = point_outside_boundary(domain_offset[], pos)
+        hover_idx = hover_is_infinity ? Int[] : hover_winner_indices(feats, pos, thickness)
         hover_color = length(hover_idx) == 1 ? CELL_HOVER_COLOR : BOUNDARY_HOVER_COLOR
 
         # The same pair of features can tie along more than one disjoint
@@ -1515,6 +1635,7 @@ function build_app(; visible=true)
         glUseProgram(bg_prog)
         set_background_uniforms!(bg_prog, bg_feats[], lo, hi)
         set_hover_uniforms!(bg_prog, hover_idx, thickness, hover_color; bound=hover_bound)
+        set_boundary_uniforms!(bg_prog, domain_offset[], BOUNDARY_FADE_DISTANCE)
         glBindVertexArray(bg_vao)
         glDrawArrays(GL_TRIANGLES, 0, 3)
         glBindVertexArray(0)
@@ -1556,7 +1677,7 @@ function build_app(; visible=true)
             glBindVertexArray(0)
         end
 
-        draw_hover_highlights!(w, h, lo, hi, pos, hover_idx, thickness, hover_kind, hover_target_id)
+        draw_hover_highlights!(w, h, lo, hi, pos, hover_idx, thickness, hover_kind, hover_target_id, hover_is_infinity)
     end
 
     # The cell/edge/vertex highlight itself is now drawn directly by the
@@ -1570,29 +1691,35 @@ function build_app(; visible=true)
     # reconstruction involved), the cursor box, and the on-screen text
     # label (built directly from `hover_idx`/`feats`, the same inputs the
     # shader used, so the label can never disagree with the highlight).
-    function draw_hover_highlights!(w, h, lo, hi, pos, hover_idx, thickness, hover_kind, hover_target_id)
+    function draw_hover_highlights!(w, h, lo, hi, pos, hover_idx, thickness, hover_kind, hover_target_id, hover_is_infinity)
         glUseProgram(highlight_prog)
         hloc(name) = glGetUniformLocation(highlight_prog, name)
         glUniform2f(hloc("uCanvasLo"), Float32(lo[1]), Float32(lo[2]))
         glUniform2f(hloc("uCanvasHi"), Float32(hi[1]), Float32(hi[2]))
 
-        glUniform4f(hloc("uColor"), INPUT_HIGHLIGHT_COLOR...)
-        for f in winners_at(feats, pos)
-            facevec = sort(collect(f.face))
-            if length(facevec) == 1
-                p = coords[facevec[1]]
-                upload!(highlight_vao, highlight_vbo, Float32[Float32(p[1]), Float32(p[2])])
-                glUniform1f(hloc("uPointSize"), Float32(w * POINT_SIZE_FRACTION * 2.4))
-                glBindVertexArray(highlight_vao)
-                glDrawArrays(GL_POINTS, 0, 1)
-                glBindVertexArray(0)
-            else
-                pa, pb = coords[facevec[1]], coords[facevec[2]]
-                upload!(highlight_vao, highlight_vbo, Float32[Float32(pa[1]), Float32(pa[2]), Float32(pb[1]), Float32(pb[2])])
-                glLineWidth(Float32(w * LINE_WIDTH_FRACTION * 2.4))
-                glBindVertexArray(highlight_vao)
-                glDrawArrays(GL_LINES, 0, 2)
-                glBindVertexArray(0)
+        # Out at the point at infinity, there's no *specific* input feature
+        # to call out in yellow -- that's the whole point of it being a
+        # single point, not stretched-out territory belonging to whichever
+        # feature is technically nearest (see `point_outside_boundary`).
+        if !hover_is_infinity
+            glUniform4f(hloc("uColor"), INPUT_HIGHLIGHT_COLOR...)
+            for f in winners_at(feats, pos)
+                facevec = sort(collect(f.face))
+                if length(facevec) == 1
+                    p = coords[facevec[1]]
+                    upload!(highlight_vao, highlight_vbo, Float32[Float32(p[1]), Float32(p[2])])
+                    glUniform1f(hloc("uPointSize"), Float32(w * POINT_SIZE_FRACTION * 2.4))
+                    glBindVertexArray(highlight_vao)
+                    glDrawArrays(GL_POINTS, 0, 1)
+                    glBindVertexArray(0)
+                else
+                    pa, pb = coords[facevec[1]], coords[facevec[2]]
+                    upload!(highlight_vao, highlight_vbo, Float32[Float32(pa[1]), Float32(pa[2]), Float32(pb[1]), Float32(pb[2])])
+                    glLineWidth(Float32(w * LINE_WIDTH_FRACTION * 2.4))
+                    glBindVertexArray(highlight_vao)
+                    glDrawArrays(GL_LINES, 0, 2)
+                    glBindVertexArray(0)
+                end
             end
         end
 
@@ -1613,6 +1740,16 @@ function build_app(; visible=true)
         glBindVertexArray(highlight_vao)
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4)
         glBindVertexArray(0)
+
+        if hover_is_infinity
+            # The point at infinity is a single point (one-point
+            # compactification's own new point, dual to the "one cell" a
+            # real input feature gets) -- not tied to any particular
+            # feature, so there's no `C<id>=`/label/mindist to compute at
+            # all, unlike every other hover case below.
+            render_hover_box!("{oo}\nD=oo")
+            return
+        end
 
         # Outside every feature's validity region (e.g. off the edge of the
         # canvas bbox): no label to show, so the box itself is hidden rather
