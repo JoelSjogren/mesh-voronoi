@@ -45,13 +45,29 @@ populated as a byproduct of the same recursion.
   predicate (fast float with a rigorous error bound, falling back to exact
   arithmetic only when needed), with a fixed symbolic tiebreak for genuine
   ties, so degenerate input never resolves two different ways.
+- **3D points-only works** (`points_complex(points)` at `N=3`, an ordinary
+  3D Voronoi diagram): a point-vs-point bisector is always a flat
+  hyperplane regardless of dimension, so this needed *no* code changes at
+  all — every piece (`init_bbox_complex`, `insert_point!`, the merge/weld
+  passes) was already written generically over `N`. Verified with vertex-
+  level cross-validation against a brute-force oracle (zero mismatches
+  across several point counts) and a genuine 8-way tie at a cube's exact
+  center resolving to one correctly-labeled vertex.
+- **3D with curved bisector surfaces (segments, planes) is not built
+  yet** — this is where the real new work is. Inserting a bisector
+  *surface* (`k=2`) means finding its own trace on the existing 2-skeleton
+  (a face-by-face walk, each face split along the trace curve, mirroring
+  `clip_top_cell_2d!`'s own 2D boundary walk one dimension up), which in
+  turn means intersecting two quadric *surfaces* into a space curve — a
+  new geometric primitive this codebase doesn't have yet — and then
+  capping the resulting cut boundary with an actual patch of the bisector
+  surface, which has no 2D analogue at all (closing a 2D cut is just one
+  new arc; closing a 3D cut is a real surface-patching problem). See
+  `triangulation-difficulties.md` for related notes.
 - **Out of scope for now**: exact coincidences (e.g. exact right-angle
   junctions) — the generic-case assumption is deliberate for v1; see the
   `house_exact` case in the dev dashboard for a live example kept around on
-  purpose. **3D is not built yet** — the feature/bisector/label machinery is
-  already dimension-generic, but inserting a bisector *surface* (`k=2`,
-  finding its own trace on the existing 2-skeleton) is the one genuinely new
-  step still needed; see `triangulation-difficulties.md` for related notes.
+  purpose.
 - `first-prototype/` holds the original 2D-only, half-edge/DCEL-based first
   attempt. It's deprecated and kept only for historical reference — all
   active development is in this repository's top-level `src/`.
