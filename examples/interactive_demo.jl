@@ -1045,15 +1045,14 @@ end
 # roof, and a small chimney rectangle whose sides cross the right roof
 # slope (so it visibly pokes through, not just sits beside it).
 #
-# The unperturbed, "obvious" numbers -- deliberately kept even though this
-# currently hits the still-open "curved bisector crossing one edge twice"
-# gap (see the dashboard's /reports/curved-twice write-up and the task
-# tracking it) partway through the roof. An earlier version of this preset
-# quietly swapped in a shallower roof and a 2-point chimney that happened
-# to avoid the gap -- that was the wrong call: it hid a real limitation
-# behind a lucky choice of numbers instead of surfacing it. If this
-# doesn't work, it doesn't work; that's the honest state of the
-# construction right now, not something to paper over here.
+# The unperturbed, "obvious" numbers -- kept even back when this used to
+# hit the "curved bisector crossing one edge twice" gap partway through the
+# roof (see the dashboard's /reports/curved-twice write-up), rather than
+# quietly swapping in numbers that happened to avoid it. That gap (both its
+# exactly-2-crossing and generic single-crossing variants) is fixed now, so
+# this preset just builds correctly -- but the numbers stayed exactly as
+# they were, since there was never a reason to change them in the first
+# place.
 const HOUSE_PRESET = [
     (:segment, SVector(-3.0, -3.0), SVector(3.0, -3.0)),   # base
     (:segment, SVector(3.0, -3.0), SVector(3.0, 2.0)),     # right wall

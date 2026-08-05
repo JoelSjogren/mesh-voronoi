@@ -261,6 +261,52 @@ end
     @test mismatches == 0
 end
 
+# The "generic variant" the same investigation's own report flagged as
+# still open even after the fix above: the symmetric case (segment {2,3}
+# exactly vertical above segment {0,1}'s own endpoint) crosses an edge
+# *exactly* twice, but a merely generic one -- nothing special about its
+# position at all -- can cross an edge only *once* while both of that
+# edge's own endpoints still agree on side. That's not "more crossings
+# than expected", as `clip_top_cell_2d!` used to assume when erroring
+# ("... has 1 interior crossings while both endpoints agree...") -- it's a
+# tie-broken endpoint (one vertex sits, numerically, exactly on the new
+# bisector itself, a genuine other-tie resolved arbitrarily by
+# `symbolic_tiebreak`) whose arbitrary side doesn't match the true local
+# parity. Fixed by deriving every resulting piece's side purely from
+# alternation starting at the *first* endpoint's own side, for any number
+# of crossings (0 through the Bezout ceiling of 4), rather than checking
+# the two endpoints' sides against each other and erroring on a mismatch.
+#
+# Cross-validated against `recompute_feature_label` (not
+# `brute_force_label_multi`: its own one-region-per-segment oracle can't
+# see a genuine tie sitting exactly on a segment's own endpoint/interior
+# boundary, and this configuration's round numbers land a whole grid
+# column exactly on one -- a known, separate oracle limitation, not a
+# construction bug; see the `stress_tie_mixed3`-style investigation
+# elsewhere this session).
+@testset "clip_by_hyperplane!: curved bisector crossing one edge once while both endpoints agree (generic variant)" begin
+    entries = [
+        (:segment, SVector(-2.0, 0.0), SVector(2.0, 0.0), 1, 2),
+        (:segment, SVector(0.0, 1.0), SVector(0.5, 2.0), 3, 4),
+    ]
+    cx, feats = multi_complex(entries, Val(2))
+
+    lo, hi = padded_bbox([SVector(-2.0, 0.0), SVector(2.0, 0.0), SVector(0.0, 1.0), SVector(0.5, 2.0)])
+    checked = 0
+    mismatches = 0
+    for x in range(lo[1], hi[1], length=161), y in range(lo[2], hi[2], length=161)
+        pt = SVector(x, y)
+        expected = recompute_feature_label(pt, feats)
+        length(expected) > 1 && continue   # skip true ties
+        got_id = find_containing_cell(cx, pt)
+        got_id === nothing && continue   # skip tessellation-tolerance boundary ambiguity
+        checked += 1
+        cx.nodes[got_id].label != expected && (mismatches += 1)
+    end
+    @test checked > 5000
+    @test mismatches == 0
+end
+
 # FORMERLY a known gap, now fixed: comparing two *different* segments' own
 # interior features against each other is a line-vs-line bisector -- and
 # squared-distance-to-a-line is already `(n·x-d)²`, so

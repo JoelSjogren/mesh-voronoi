@@ -166,3 +166,32 @@ end
               n.label != MeshVoronoi.recompute_feature_label(n.point, feats)]
     @test isempty(bad)
 end
+
+@testset "regression: cells_area_overlap false positive at a shared vertex" begin
+    # Two same-label cells that only *touch* at a single shared vertex (a
+    # perfectly ordinary thing for several territories to do where they
+    # meet) used to get flagged by `assert_label_bbox_invariant` as a
+    # missed merge: `cells_area_overlap`'s even-odd ray-cast
+    # (`point_in_edge_loop`) has no reliable answer for a point exactly on
+    # the other polygon's own boundary, and can come out "inside" purely by
+    # chance depending on which side of the horizontal scanline each
+    # adjacent edge happens to fall. Confirmed directly on this exact
+    # 2-entry sequence: the shared vertex (a single, exact vertex id on
+    # both cells' own boundaries) was reported "inside" the other cell,
+    # even though `cells_share_edge` correctly said the two cells don't
+    # share a genuine edge at all. Fixed by having `cells_area_overlap`
+    # skip any vertex within `point_near_edge_loop`'s tolerance of the
+    # other polygon's own boundary, rather than testing it for "inside" at
+    # all.
+    entries = Any[
+        (:segment, SVector(2.353, 3.067), SVector(-2.586, 3.669), 1, 2),
+        (:segment, SVector(-0.571, 2.612), SVector(2.323, 4.993), 3, 4),
+    ]
+    cx, feats = multi_complex(entries, Val(2))
+    # `@test_logs` with no expected patterns fails if *any* log record
+    # (including `assert_label_bbox_invariant`'s own `@warn`) is emitted --
+    # unlike a plain `=== nothing` check, which can't tell a clean pass
+    # apart from a warned-and-continued one, since this function always
+    # returns `nothing` either way.
+    @test_logs assert_label_bbox_invariant(cx)
+end

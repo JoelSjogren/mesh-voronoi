@@ -104,6 +104,29 @@
 <main>
 
   <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">update</span> the "generic variant" below is fixed too</h2>
+    <p>
+      This report's own table (below) called the <em>generic</em> variant (v3=(0.5,2), no special
+      alignment at all) "the real gap &mdash; still open" even after the symmetric variant's own
+      double-crossing was fixed. It's fixed now. The root cause turned out to be subtler than "more
+      crossings than expected": <code>clip_top_cell_2d!</code> decided how many cuts to make on an edge
+      by comparing its two endpoints' own (possibly <code>symbolic_tiebreak</code>'d) sides, and errored
+      whenever a genuinely generic configuration's strict interior crossing count didn't match what that
+      comparison implied &mdash; e.g. "1 interior crossing while both endpoints agree" is <em>not</em> an
+      exotic higher-crossing-count case, it's an ordinary single crossing paired with one endpoint that
+      happens to sit (numerically) exactly on the new bisector itself, whose arbitrary tie-broken side
+      doesn't reflect the true local sign. Fixed by deriving every resulting piece's side purely by
+      alternating from the <em>first</em> endpoint's own side across however many strict interior
+      crossings actually exist (0 through the Bezout ceiling of 4, for two genuine conics) &mdash; never
+      consulting the second endpoint's own side at all, since it's exactly the value that can't be
+      trusted here. See <code>test_segments.jl</code>'s own
+      <code>"clip_by_hyperplane!: curved bisector crossing one edge once while both endpoints agree on
+      side (generic variant)"</code> test, which reproduces this report's own generic-variant numbers
+      exactly and cross-validates against 25000+ grid points with zero mismatches.
+    </p>
+  </div>
+
+  <div class="card" style="border-color: var(--good);">
     <h2><span class="badge good">update</span> multi-crossing is now handled (task #26)</h2>
     <p>
       The gap this report documents &mdash; a curved bisector crossing a single existing edge twice,
@@ -113,7 +136,8 @@
       not a rare coincidence), and reassembles the resulting same-side runs into their own cells, each
       closed by its own fresh arc. The general-purpose (non-`N=2`, or more-than-2-crossings) fallback
       still only supports a single crossing per edge and errors otherwise &mdash; a scope limit of that
-      specific code path, not a claim that more crossings are somehow non-generic.
+      specific code path (never actually reached at `N=2`, since every real call site here clips a
+      genuine top-level cell), not a claim that more crossings are somehow non-generic.
     </p>
     <p>
       Everything below is the <strong>original</strong> report, kept as-is (including the now-stale
@@ -173,7 +197,7 @@ case handled so far</pre>
     <table>
       <tr><th>variant</th><th>v2</th><th>v3</th><th>what it shows</th></tr>
       <tr><td>symmetric</td><td>(0,1)</td><td>(0,2)</td><td>an exact 3-way tie &mdash; now fixed</td></tr>
-      <tr><td>generic</td><td>(0,1)</td><td>(0.5,2)</td><td>the real gap &mdash; still open</td></tr>
+      <tr><td>generic</td><td>(0,1)</td><td>(0.5,2)</td><td>the real gap &mdash; now fixed</td></tr>
     </table>
     <p>
       Both variants share the same essential shape (a short segment poking up from a point just above
@@ -223,7 +247,7 @@ case handled so far</pre>
   </div>
 
   <div class="card">
-    <h2>Step 4 &mdash; the bisector crosses this cell's edge twice <span class="badge bad">bug</span></h2>
+    <h2>Step 4 &mdash; the bisector crosses this cell's edge twice <span class="badge good">now fixed</span></h2>
     <div class="step">
       <img src="/images/report_curved_twice_step4.png" alt="Step 4">
       <div class="desc">
@@ -256,13 +280,15 @@ case handled so far</pre>
   <div class="card">
     <h2>Where this points</h2>
     <p>
-      Generalizing <code>clip_by_hyperplane!</code>'s edge-processing to support more than one
-      crossing per edge (splitting into 3+ pieces along a single original edge, in whichever order the
-      crossings occur) would close this gap for the 2D case; the general-<code>N</code> case needs the
-      same idea one dimension up (a curved bisector <em>surface</em> meeting an existing face more than
-      once). Not attempted this session. The interactive demo handles the current error gracefully
-      (the add is cleanly rejected and rolled back, no corruption), and the "house" preset needed a
-      chimney position specifically chosen to avoid triggering it &mdash; a workaround, not a fix.
+      <span class="badge good">done</span> generalizing <code>clip_by_hyperplane!</code>'s
+      edge-processing to support any number of crossings per edge (splitting into as many pieces as
+      needed along a single original edge, sides derived by alternation rather than by comparing the
+      two endpoints against each other) closed this gap for the 2D case, for both the exactly-2-crossing
+      and the single-generic-crossing-with-a-tied-endpoint variants above. The general-<code>N</code>
+      case still needs the same idea one dimension up (a curved bisector <em>surface</em> meeting an
+      existing face more than once) &mdash; not attempted yet, since 3D construction itself hasn't
+      started. The interactive demo's "house" preset no longer needs its chimney position specially
+      chosen to avoid this gap, now that both variants are fixed.
     </p>
   </div>
 

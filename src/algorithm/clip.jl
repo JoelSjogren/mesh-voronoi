@@ -869,44 +869,68 @@ function clip_top_cell_2d!(cx::CellComplex{2}, start_id::Int, quad::Quadric{2,Fl
         p1, p2 = cx.nodes[p1id].point, cx.nodes[p2id].point
         s1, s2 = haskey(a_piece, p1id), haskey(a_piece, p2id)
 
-        if s1 == s2
-            # The old all_a/all_b shortcut's own case (both endpoints
-            # already agree, via `a_piece`/`b_piece`'s possibly
-            # tie-broken sides): a strict interior crossing here used to
-            # be an error ("outside the generic case"); now it's the
-            # genuine bite/island case this whole function exists to
-            # handle, provided it's exactly 2 (0 stays the plain
-            # unsplit case, matching the old shortcut exactly).
-            xs = edge_strict_interior_crossings(quad, p1, p2, enode.curve)
-            if isempty(xs)
-                pieces = [(s1, e, p1id, p2id)]
-            elseif length(xs) == 2
-                cuts = (add_cell!(cx, 0, Label(), Int[], xs[1]), add_cell!(cx, 0, Label(), Int[], xs[2]))
-                verts = (p1id, cuts[1], cuts[2], p2id)
-                sides = (s1, !s1, s1)
-                pieces = Tuple{Bool,Int,Int,Int}[]
-                for i in 1:3
-                    pid = add_cell!(cx, 1, Label(), [verts[i], verts[i+1]]; curve=enode.curve)
-                    push!(pieces, (sides[i], pid, verts[i], verts[i+1]))
-                end
-                push!(pending, (e, [p[2] for p in pieces]))
-            else
-                error("clip_by_hyperplane!: edge $e has $(length(xs)) interior crossings while both endpoints agree on side -- only 0 or 2 are handled here (more are algebraically possible for two curved quadrics, just not implemented)")
-            end
-        else
-            # Exactly the old dim==1 split branch, unchanged: endpoints
-            # disagree, so expect exactly one (inclusive-tolerance)
-            # crossing -- a root landing near a tie-broken endpoint here
-            # is `weld_near_duplicate_vertices!`'s job to clean up later,
-            # not something to special-case away in this function.
+        # Every interior crossing of `quad` along this edge flips the side,
+        # so `s1` alone (alternating once per crossing) determines every
+        # resulting piece's side -- for *any* number of crossings, not just
+        # 0 or 2: this is just the intermediate value theorem applied
+        # piecewise, true regardless of how many times a curved bisector
+        # dips in and out (up to 4, by Bezout, for two genuine conics).
+        # `s2` itself is never consulted for this: it's `a_piece`/`b_piece`'s
+        # own, possibly-tie-broken (`symbolic_tiebreak`) side for `p2id`,
+        # which can legitimately disagree with the alternation's own final
+        # piece when `p2id` sits (numerically) exactly on `quad` itself --
+        # a genuine other-tie there, arbitrarily broken one way, doesn't
+        # change which side the strictly-interior geometry actually
+        # occupies. Using strict crossings here (not `s1==s2`) to decide how
+        # many cuts to make is what makes this robust to exactly that case,
+        # which is confirmed the real cause of the previously-open
+        # "N interior crossings while both endpoints agree" failures: not
+        # literally more crossings than anticipated, but a tie-broken
+        # endpoint whose arbitrary side doesn't match the true local parity.
+        xs = edge_strict_interior_crossings(quad, p1, p2, enode.curve)
+        if isempty(xs) && s1 != s2
+            # The one case strict crossings can genuinely miss: the true
+            # crossing sits so close to one endpoint that the strict
+            # (non-inclusive) tolerance filters it out entirely. Falls back
+            # to the inclusive finder, which still locates it (right where
+            # `weld_near_duplicate_vertices!` expects to reconcile it
+            # afterward) -- unchanged from this function's original
+            # single-crossing behavior.
             crossings = edge_points_at_crossings(quad, p1, p2, enode.curve)
-            length(crossings) == 1 || error("clip_by_hyperplane!: edge $e has $(length(crossings)) crossings (expected exactly 1) -- not handled here (disagreeing endpoints only forces an odd count, and more than 1 is possible in principle for two curved quadrics)")
-            x = only(crossings)
-            cut = add_cell!(cx, 0, Label(), Int[], x)
-            pid1 = add_cell!(cx, 1, Label(), [p1id, cut]; curve=enode.curve)
-            pid2 = add_cell!(cx, 1, Label(), [cut, p2id]; curve=enode.curve)
-            pieces = [(s1, pid1, p1id, cut), (s2, pid2, cut, p2id)]
-            push!(pending, (e, [pid1, pid2]))
+            if length(crossings) == 1
+                xs = crossings
+            else
+                # No genuine interior crossing at all, inclusive tolerance
+                # included -- by the intermediate value theorem, `s1 != s2`
+                # despite that can only mean one endpoint's own *recorded*
+                # side is itself an arbitrary tie-break (`symbolic_tiebreak`,
+                # from the vertex-labeling loop above), not a reflection of
+                # `quad`'s true local sign there: a genuine sign change
+                # would force an actual crossing to exist somewhere
+                # strictly between them, which was just confirmed absent.
+                # The endpoint with the larger |value| is the one whose
+                # side is trustworthy (further from the zero set, so its
+                # sign isn't a coin flip); use that one for the whole
+                # (unsplit) edge instead of erroring over the other's own
+                # arbitrary tie-break disagreeing with it.
+                v1, v2 = evaluate(quad, p1), evaluate(quad, p2)
+                s1 = (abs(v1) >= abs(v2) ? v1 : v2) < 0
+            end
+        end
+
+        if isempty(xs)
+            pieces = [(s1, e, p1id, p2id)]
+        else
+            length(xs) <= 4 || error("clip_by_hyperplane!: edge $e has $(length(xs)) interior crossings -- two genuine quadrics can cross at most 4 times (Bezout), so this many indicates a bug in the crossing finder, not a valid configuration")
+            cuts = [add_cell!(cx, 0, Label(), Int[], x) for x in xs]
+            verts = vcat(p1id, cuts, p2id)
+            pieces = Tuple{Bool,Int,Int,Int}[]
+            for i in 1:length(verts)-1
+                side = isodd(i) ? s1 : !s1
+                pid = add_cell!(cx, 1, Label(), [verts[i], verts[i+1]]; curve=enode.curve)
+                push!(pieces, (side, pid, verts[i], verts[i+1]))
+            end
+            push!(pending, (e, [p[2] for p in pieces]))
         end
 
         for (is_a, pid, _, _) in pieces

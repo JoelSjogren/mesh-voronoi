@@ -223,6 +223,44 @@ function cells_share_edge(cx::CellComplex{2}, id1::Int, id2::Int; atol=1e-9)
 end
 
 """
+Whether world point `pt` lies within `atol` of any edge in `edges` (dim=1
+`cx` nodes, straight or curved) -- straight via perpendicular distance to
+the segment (clamped to its own extent), curved via the curve's own
+equation value (near zero) combined with `on_arc_between` to confirm `pt`
+falls within that specific arc's own bounds, not just somewhere on the
+curve's infinite extent.
+
+This is what lets `cells_area_overlap` tell "genuinely inside" apart from
+"exactly on the boundary" -- see its own docstring for why the standard
+even-odd `point_in_edge_loop` ray-cast alone can't make that distinction
+(a point exactly on a polygon's own edge/vertex is a classic degenerate
+case for that algorithm, and can come out either way depending on
+essentially arbitrary tie-breaking of which side of the scanline each
+adjacent edge falls).
+"""
+function point_near_edge_loop(cx::CellComplex{2}, edges::Vector{Int}, pt::Pt{2,Float64}; atol=1e-6)
+    for e in edges
+        en = cx.nodes[e]
+        v1, v2 = en.subcells
+        p1, p2 = cx.nodes[v1].point, cx.nodes[v2].point
+        if en.curve === nothing
+            d = p2 - p1
+            len2 = sum(abs2, d)
+            if len2 < 1e-18
+                norm(pt - p1) < atol * max(1.0, norm(pt)) && return true
+                continue
+            end
+            t = clamp(dot(pt - p1, d) / len2, 0.0, 1.0)
+            norm(pt - (p1 + t * d)) < atol * max(1.0, norm(pt)) && return true
+        else
+            abs(evaluate(en.curve, pt)) < atol * max(1.0, norm(pt))^2 || continue
+            on_arc_between(en.curve, p1, p2, pt) && return true
+        end
+    end
+    return false
+end
+
+"""
 Whether 2D cells `id1`,`id2` actually overlap in area, checked exactly (not
 by sampling their bounding boxes' shared region): a genuine overlap between
 two cells built by a sequence of clips essentially always traps at least
@@ -232,6 +270,20 @@ without ever separating the two interiors, an exotic degenerate
 configuration this doesn't attempt to catch) -- far cheaper than a grid
 scan, and this runs inside a check (`assert_label_bbox_invariant`) called
 after every single insertion.
+
+A vertex that lies on (not just near, but within `point_near_edge_loop`'s
+own tolerance of) the *other* cell's own boundary is skipped rather than
+tested: it isn't strictly inside or outside by definition, and the
+even-odd ray-cast `point_in_edge_loop` uses below has no reliable answer
+for it either way (see `point_near_edge_loop`'s own docstring) -- without
+this, two cells merely touching at a shared vertex (an exact id match,
+routine and correct wherever three or more territories meet at a point)
+or along another cell's curved arc (confirmed reachable: a vertex created
+by one clip can sit, geometrically, exactly on an *unrelated* edge's own
+curve without being one of its stored endpoints) could get spuriously
+reported as overlapping, which is exactly what was happening before this
+check existed -- confirmed via a minimal reproduction where the reported
+"overlap" vertex was the *one point* two cells genuinely share.
 """
 function cells_area_overlap(cx::CellComplex{2}, id1::Int, id2::Int)
     # `find_outer_loop` returns `nothing` for a cell whose own edges are
@@ -245,10 +297,14 @@ function cells_area_overlap(cx::CellComplex{2}, id1::Int, id2::Int)
     (isempty(ew1) || isempty(ew2)) && return false
     e1, e2 = [e for (e, _, _) in ew1], [e for (e, _, _) in ew2]
     for (_, v, _) in ew1
-        point_in_edge_loop(cx, e2, cx.nodes[v].point) && return true
+        pt = cx.nodes[v].point
+        point_near_edge_loop(cx, e2, pt) && continue
+        point_in_edge_loop(cx, e2, pt) && return true
     end
     for (_, v, _) in ew2
-        point_in_edge_loop(cx, e1, cx.nodes[v].point) && return true
+        pt = cx.nodes[v].point
+        point_near_edge_loop(cx, e1, pt) && continue
+        point_in_edge_loop(cx, e1, pt) && return true
     end
     return false
 end
