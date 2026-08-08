@@ -1,20 +1,12 @@
 """
-`n+1` points (including both endpoints) sampled along `curve` between two
-points `p1`, `p2` already known to lie on it -- parametrizes by `curve`'s
-own natural single-valued axis (`curve_natural_axis`, the eigenvector of
-its nonzero eigenvalue), not by whichever raw coordinate (x or y) happens
-to vary more between `p1` and `p2`. That older convention needed a
-"which of the two roots is nearer the previous sample" heuristic to stay
-on the right branch, and could lose track of it entirely when the arc's
-own turning point (where *neither* raw coordinate stays monotonic) fell
-between `p1` and `p2` -- confirmed to actually happen and produce a
-visibly self-intersecting result (see the self-intersection investigation
-report). Parametrizing by the curve's own natural axis needs no branch
-choice at all: projecting `curve` onto its own eigenbasis turns its
-equation into `λu² + 2βᵤu + 2βᵥv + c = 0` (no `v²` or `uv` term, since
-`axis`/`perp` are exactly `M`'s eigenvectors), which solves for `v`
-*uniquely* given `u` -- linear, not quadratic, so there is no second root
-to ever mistakenly pick.
+`n+1` points sampled along `curve` between `p1`,`p2` (already on it) --
+parametrizes by `curve`'s own natural single-valued axis
+(`curve_natural_axis`), not by whichever raw coordinate happens to vary
+more, which needed a branch-choice heuristic and could lose track when
+the arc's own turning point fell between `p1`,`p2` (confirmed to produce
+a self-intersecting result). Projecting onto the eigenbasis makes the
+equation `λu² + 2βᵤu + 2βᵥv + c = 0` (no `v²`/`uv` term), solving for `v`
+uniquely given `u` -- linear, no branch to pick.
 """
 function tessellate_curve(curve::Quadric{2,Float64}, p1::Pt{2,Float64}, p2::Pt{2,Float64}; n=16)
     axis = curve_natural_axis(curve)
@@ -33,14 +25,11 @@ function tessellate_curve(curve::Quadric{2,Float64}, p1::Pt{2,Float64}, p2::Pt{2
 end
 
 """
-The vertices of the 2D cell `id`, walked around its actual boundary in
-order (not just collected and angle-sorted -- that trick only recovers the
-right order for a straight-edged convex polygon, which every G1 cell is,
-but no longer holds once a boundary edge is curved). Straight edges
-contribute just their own start point; a curved edge (`curve !== nothing`,
-since G2) is tessellated into several points along its true shape via
-`tessellate_curve`, so a parabolic bisector renders as an actual arc
-rather than the straight chord between its endpoints.
+The vertices of 2D cell `id`, walked around its actual boundary in order
+(angle-sorting only works for a straight-edged convex polygon, not once a
+boundary edge is curved). Straight edges contribute just their start
+point; a curved edge is tessellated via `tessellate_curve` so it renders
+as an actual arc, not a chord.
 """
 function polygon_vertices_2d(cx::CellComplex{2}, id::Int)
     edges = cx.nodes[id].subcells
@@ -89,14 +78,11 @@ function polygon_vertices_2d(cx::CellComplex{2}, id::Int)
 end
 
 """
-Whether `pt` lies inside the simple polygon `poly` (vertices in order,
-either winding) -- the standard crossing-number/ray-casting test (PNPOLY).
-Correct for non-convex polygons, unlike a same-side-of-every-edge check
-(which implicitly assumes convexity): a generalized-Voronoi cell is *not*
-always convex once curved bisectors are in play -- the region closer to a
-line/segment-interior than to a nearby point is the non-convex complement
-of the point's own (convex) region, so e.g. a segment's own territory can
-genuinely wrap around a point.
+Whether `pt` lies inside simple polygon `poly` -- standard crossing-
+number/ray-casting test (PNPOLY). Correct for non-convex polygons, unlike
+a same-side-of-every-edge check: a generalized-Voronoi cell isn't always
+convex once curved bisectors are in play (e.g. a segment's own territory
+can wrap around a point).
 """
 function point_in_polygon_2d(poly::Vector{Pt{2,Float64}}, pt::Pt{2,Float64})
     n = length(poly)
@@ -115,36 +101,22 @@ function point_in_polygon_2d(poly::Vector{Pt{2,Float64}}, pt::Pt{2,Float64})
 end
 
 """
-Whether `pt` lies within node `id`'s own cached bounding box -- a cheap
-`O(1)` reject usable before any exact-but-expensive test (walking a
-tessellated curved boundary, a full point-in-polygon scan). Safe as a
-*reject* precisely because the box is a guaranteed conservative enclosure
-(see `CellNode`'s docstring): failing this check means `pt` cannot
-possibly be inside `id`, but passing it is not itself proof of the
-opposite -- the exact test downstream still has to run.
+Whether `pt` lies within node `id`'s cached bounding box -- a cheap O(1)
+reject before an exact-but-expensive test. Safe as a reject because the
+box is a guaranteed conservative enclosure; passing doesn't prove `pt` is
+actually inside.
 """
 function in_bbox(node::CellNode{2}, pt::Pt{2,Float64}; pad::Float64=0.0)
     return all(node.bbox_lo .- pad .<= pt) && all(pt .<= node.bbox_hi .+ pad)
 end
 
 """
-The unit direction along which a genuine curved edge's own `curve` is
-single-valued: projecting any point known to lie on `curve` onto this axis
-gives a value that uniquely identifies that point (the *other* coordinate
-is then pinned down by `curve`'s own equation directly, not one of two
-`±` choices) -- the eigenvector of `curve.M`'s nonzero eigenvalue. Every
-curved edge this codebase actually stores is a genuine parabola (`M` rank
-1, one zero eigenvalue) -- a line-vs-line bisector is always a pair of two
-straight lines instead, handled by `clip_by_line_pair!` as two separate
-flat edges, never stored as a single curved one -- so this needs no
-general eigendecomposition: for a rank-1 `M` (`det(M) = 0`), `M`'s own
-first row is *already* the eigenvector for the nonzero eigenvalue (falls
-straight out of the algebra: `M*(a,b) = (a²+b², b(a+d))`, which is exactly
-`(a,b)*(a+d)` whenever `ad-b²=0`, i.e. `det(M)=0` -- so `(a,b)` -- `M`'s
-first row -- is already an eigenvector, with eigenvalue `a+d = tr(M)`).
-Falls back to the second row if the first happens to be exactly zero
-(only the second can be, since `M` isn't the all-zero matrix -- that would
-mean `curve` isn't actually curved at all).
+Unit direction along which curved edge's own `curve` is single-valued --
+the eigenvector of `curve.M`'s nonzero eigenvalue. Every stored curved
+edge is a genuine parabola (`M` rank 1), so no general eigendecomposition
+is needed: for rank-1 `M` (`det(M)=0`), `M`'s own first row is already
+that eigenvector (falls out of the algebra directly). Falls back to the
+second row if the first is exactly zero.
 """
 function curve_natural_axis(curve::Quadric{2,Float64})
     r1 = SVector(curve.M[1, 1], curve.M[1, 2])
@@ -153,20 +125,11 @@ function curve_natural_axis(curve::Quadric{2,Float64})
 end
 
 """
-Whether `x` (assumed already on `curve`) lies on the arc strictly between
-`p1` and `p2` (also on `curve`) -- exact, not a coordinate-range heuristic:
-projects all three onto `curve`'s own natural single-valued axis
-(`curve_natural_axis`) and checks whether `x`'s projection falls between
-`p1`'s and `p2`'s. This is *not* the same as checking whether `x`'s literal
-x or y coordinate falls between `p1`'s and `p2`'s -- that only works when
-the arc's own turning point (a parabola's vertex) doesn't lie between `p1`
-and `p2`, since only then does a raw coordinate stay monotonic along the
-whole arc; `tessellate_curve`'s own "whichever coordinate varies more"
-convention makes exactly that assumption, and produces a real,
-self-intersecting discontinuity when it's violated (see the
-self-intersection investigation report). Projecting onto the curve's own
-natural axis has no such blind spot: it's single-valued along the *entire*
-curve, turning point included, by construction.
+Whether `x` (on `curve`) lies strictly between `p1`,`p2` (also on
+`curve`) -- exact, not a coordinate-range heuristic: projects all three
+onto `curve`'s own natural axis (`curve_natural_axis`), which stays
+single-valued through the arc's turning point, unlike a raw x/y range
+check.
 """
 function on_arc_between(curve::Quadric{2,Float64}, p1::Pt{2,Float64}, p2::Pt{2,Float64}, x::Pt{2,Float64}; tol=1e-9)
     axis = curve_natural_axis(curve)
@@ -176,12 +139,7 @@ function on_arc_between(curve::Quadric{2,Float64}, p1::Pt{2,Float64}, p2::Pt{2,F
     return lo - margin <= tx <= hi + margin
 end
 
-"""
-The real `x` values where `curve` crosses the horizontal line `y = y0` --
-exact, substituting `y=y0` into `curve`'s own equation
-(`x²·M₁₁ + 2x·(M₁₂y₀+b₁) + (M₂₂y₀²+2b₂y₀+c) = 0`) and solving the
-resulting quadratic in `x` directly. 0, 1, or 2 real roots.
-"""
+"""Real `x` values where `curve` crosses `y=y0` -- substitute and solve the resulting quadratic."""
 function curve_crossings_at_y(curve::Quadric{2,Float64}, y0::Float64)
     A = curve.M[1, 1]
     B = 2 * (curve.M[1, 2] * y0 + curve.b[1])
@@ -190,34 +148,19 @@ function curve_crossings_at_y(curve::Quadric{2,Float64}, y0::Float64)
 end
 
 """
-Whether `pt` lies inside 2D cell `id`'s own region -- exact, not
-tessellation-based: the standard even-odd ray-crossing rule (a horizontal
-ray from `pt` toward `+∞` in `x`), generalized to boundary edges that may
-themselves be curved. A straight edge contributes its ordinary single
-crossing test (same algebra as `point_in_polygon_2d`). A curved edge can
-cross the ray 0, 1, or 2 times -- found by solving its own equation
-directly at `y = pt[2]` (`curve_crossings_at_y`), each candidate kept only
-if it's genuinely on that edge's own bounded arc (`on_arc_between`, not a
-coordinate-range guess) and to the right of `pt`. Correct for non-convex
-cells the same way `point_in_polygon_2d` is (a generalized-Voronoi cell
-isn't always convex once curved bisectors are in play), *and* immune to
-the self-intersection a tessellated approximation of a curved edge can
-introduce (see the self-intersection investigation report) -- this never
-builds an approximate polygon at all, so there's nothing to self-intersect.
+Whether `pt` lies inside 2D cell `id`'s region -- exact, not tessellation-
+based: even-odd ray-crossing generalized to curved boundary edges. A
+curved edge can cross the ray 0-2 times (`curve_crossings_at_y`), kept
+only if genuinely on the edge's bounded arc (`on_arc_between`). Immune to
+the self-intersection a tessellated approximation could introduce, since
+no approximate polygon is ever built.
 """
 point_in_cell_2d(cx::CellComplex{2}, id::Int, pt::Pt{2,Float64}) = point_in_edge_loop(cx, cx.nodes[id].subcells, pt)
 
 """
-The id of the currently-live, labeled top-dimensional cell of `cx`
-containing `pt` (2D point-location), or `nothing` if `pt` is outside every
-cell (e.g. outside the bounding box, or exactly on a shared boundary where
-rounding could go either way). Exact for both straight and curved
-boundaries (`point_in_cell_2d`) -- each candidate cell is cheaply
-bbox-rejected (`in_bbox`) first, so the exact test only runs for cells
-that could actually contain `pt`. Still a linear scan over every live top
-cell otherwise -- fine for the interactive demo's modest cell counts; a
-BVH built over the same cached boxes (see `build_bvh`) is the natural
-upgrade for much larger complexes.
+The id of the live top-dimensional cell of `cx` containing `pt`, or
+`nothing`. Exact for straight and curved boundaries; bbox-rejected first.
+Linear scan -- `build_bvh` is the upgrade for larger complexes.
 """
 function find_containing_cell(cx::CellComplex{2}, pt::Pt{2,Float64})
     for id in eachindex(cx.nodes)
@@ -230,19 +173,10 @@ function find_containing_cell(cx::CellComplex{2}, pt::Pt{2,Float64})
     return nothing
 end
 
-# ---------------------------------------------------------------------------
-# BVH: `find_containing_cell`'s bbox pre-check still has to visit every
-# live top cell once per query (an O(1) reject is still an O(n) loop over
-# all of them) -- a bounding-volume hierarchy built over the same cached
-# boxes turns that into an O(log n) descent by ruling out whole *groups* of
-# cells at once wherever a query point misses an interior node's own
-# (already-conservative) box. Built fresh from `cx`'s current live top
-# cells rather than maintained incrementally across insertions: a single
-# `insert_entry!`/`insert_point!` call can supersede, split, and merge
-# enough cells that incremental tree surgery would be its own significant
-# bookkeeping burden, for a data structure that's cheap to rebuild outright
-# (a handful of comparisons and sorts per cell) relative to the insertion
-# step that just ran.
+# BVH: turns find_containing_cell's O(n) bbox scan into an O(log n)
+# descent. Built fresh from cx's current live top cells each time rather
+# than maintained incrementally -- cheap to rebuild outright vs. the
+# bookkeeping of tree surgery across supersede/split/merge.
 
 struct BVHNode
     lo::Pt{2,Float64}
@@ -253,13 +187,9 @@ struct BVHNode
 end
 
 """
-A static BVH over a fixed snapshot of `cx`'s live top cells' own cached
-boxes (see `CellNode`'s docstring for why those are always a safe, if not
-always perfectly tight, enclosure -- exactly the property a BVH needs from
-its leaves to never wrongly skip a cell). `nodes` is laid out bottom-up
-(post-order): every node's children always appear at *smaller* indices
-than the node itself, so `root` is unambiguous even without a dedicated
-pointer field -- it's simply `length(nodes)`.
+A static BVH over a fixed snapshot of `cx`'s live top cells' cached boxes.
+`nodes` is laid out bottom-up (post-order): children always at smaller
+indices than their parent, so `root` is simply `length(nodes)`.
 """
 struct BVH
     nodes::Vector{BVHNode}
@@ -285,11 +215,9 @@ function build_bvh_range!(nodes::Vector{BVHNode}, leaves::AbstractVector{<:Tuple
 end
 
 """
-Builds a fresh `BVH` over every currently-live, labeled top-dimensional
-cell of `cx`, splitting each internal node's leaves at the median along
-whichever axis its own box is widest on -- a plain median-split tree
-(no surface-area-heuristic tuning), which is enough to turn point-location
-from linear into logarithmic without adding real construction cost.
+Builds a fresh `BVH` over every live, labeled top-dimensional cell of
+`cx`, splitting at the median along the widest axis -- plain median-split,
+no SAH tuning, enough to make point-location logarithmic.
 """
 function build_bvh(cx::CellComplex{2})
     leaves = Tuple{Int,Pt{2,Float64},Pt{2,Float64}}[]
@@ -306,13 +234,9 @@ function build_bvh(cx::CellComplex{2})
 end
 
 """
-Point-location against `bvh` instead of a plain linear scan: descends only
-into subtrees whose own box actually contains `pt`, exact-testing
-(`point_in_cell_2d`) just the leaf cells that survive -- everywhere else,
-whole groups of cells are ruled out by a single box check on their shared
-ancestor. Returns the same answer `find_containing_cell(cx, pt)` would
-(assuming `bvh` was built from this same, unmodified `cx`), just faster
-for large cell counts.
+Point-location against `bvh`: descends only into subtrees whose box
+contains `pt`, exact-testing just the surviving leaves. Same answer as
+`find_containing_cell`, faster for large cell counts.
 """
 function find_containing_cell_bvh(cx::CellComplex{2}, bvh::BVH, pt::Pt{2,Float64})
     bvh.root == 0 && return nothing
@@ -342,25 +266,14 @@ function point_to_segment_sqdist(pt::Pt{2,Float64}, a::Pt{2,Float64}, b::Pt{2,Fl
     return sum(abs2, pt - (a + t * ab))
 end
 
-"""
-The true-shape polyline of boundary edge `id` (a live `dim == 1` cell): its
-two endpoints directly if `curve === nothing`, or a `tessellate_curve`
-approximation of its actual arc otherwise -- the same shape
-`polygon_vertices_2d` walks each edge as, factored out so anything wanting
-to draw or measure against an edge's real geometry (not the straight chord
-between its endpoints) doesn't have to re-derive this.
-"""
+"""True-shape polyline of boundary edge `id`: its two endpoints, or a `tessellate_curve` approximation if curved."""
 function edge_polyline(cx::CellComplex{2}, id::Int)
     node = cx.nodes[id]
     p1, p2 = cx.nodes[node.subcells[1]].point, cx.nodes[node.subcells[2]].point
     return node.curve === nothing ? [p1, p2] : tessellate_curve(node.curve, p1, p2)
 end
 
-"""
-Distance from `pt` to the boundary edge `id` (a live, labeled `dim == 1`
-cell), following its true shape via `edge_polyline` -- exact for straight
-edges, a very close approximation for curved ones.
-"""
+"""Distance from `pt` to boundary edge `id`, via `edge_polyline` -- exact for straight edges, close approximation for curved."""
 function edge_distance(cx::CellComplex{2}, id::Int, pt::Pt{2,Float64})
     pts = edge_polyline(cx, id)
     d2 = Inf
@@ -372,33 +285,18 @@ end
 
 """
 Point-location with a thickness tolerance for boundaries, returning
-`(:vertex, id)`, `(:edge, id)`, `(:cell, id)`, or `(nothing, nothing)`
-(outside everything).
+`(:vertex, id)`, `(:edge, id)`, `(:cell, id)`, or `(nothing, nothing)`.
 
-A plain point-in-polygon test (`find_containing_cell`) always resolves to
-*some* cell, even for a cursor sitting exactly on (or a pixel away from)
-the interface between two of them -- there's no way to ask "am I hovering
-the *boundary*", which is exactly where the interesting information is
-(the boundary's own label is a genuine tie, e.g. between two segments,
-that neither adjacent cell's own single-element label shows). Boundaries
-of boundaries need the same treatment one dimension down: a live *vertex*
-(dim 0) can itself be a genuine multi-way tie -- e.g. where three cells'
-territories meet at once -- that no single edge touching it can show (an
-edge only ever carries the 2-way tie between the two cells *it*
-separates). Vertices are checked first and win outright over an edge or
-cell match within the same `thickness`: a vertex is the most specific
-possible location, and every edge incident to it passes arbitrarily close
-by construction, so without this priority a vertex could otherwise never
-be the reported target at all.
+A plain point-in-polygon test always resolves to *some* cell, with no way
+to ask "am I hovering the boundary" -- exactly where the interesting
+label information is (a genuine tie neither adjacent cell's own label
+shows). Vertices are checked first and win outright within the same
+`thickness`: the most specific location, and every incident edge passes
+arbitrarily close, so without this priority a vertex could never be the
+reported target.
 
-Each candidate (whichever dimension) is cheaply bbox-rejected first
-(`in_bbox`, padded by `thickness` so a genuinely within-tolerance
-candidate can never be skipped just because `pt` sits outside its own
-tight box), so the exact (and, for a curved edge, tessellation-walking)
-distance only runs for candidates that could actually be within range.
-`thickness` is in the same world-space units as `pt` -- callers that want
-a constant *screen* thickness regardless of zoom (e.g. an interactive
-demo) should scale it by their own current view extent.
+`thickness` is in world-space units -- callers wanting a constant
+*screen* thickness should scale it by their own current view extent.
 """
 function find_hover_target(cx::CellComplex{2}, pt::Pt{2,Float64}, thickness::Float64)
     best_vertex, best_vertex_dist = nothing, thickness
@@ -434,14 +332,9 @@ function find_hover_target(cx::CellComplex{2}, pt::Pt{2,Float64}, thickness::Flo
 end
 
 """
-Render every given top-dimensional (2D) cell of `cx` as a filled polygon
-with its own color, plus the original input points marked in black --
-matches the visual style of the 2D prototype's `plot_output_complex`, at
-much smaller scope (G1's points-only case, one figure worth of cells
-passed explicitly rather than queried from a fully general complex).
-
-Implemented in the `MeshVoronoiGLMakieExt` package extension (only
-loaded once the caller also has GLMakie loaded) so the core package
-doesn't carry GLMakie as a hard dependency.
+Render given top-dimensional cells of `cx` as filled polygons, input
+points marked in black. Implemented in the `MeshVoronoiGLMakieExt`
+package extension so the core package doesn't carry GLMakie as a hard
+dependency.
 """
 function plot_cells_2d end

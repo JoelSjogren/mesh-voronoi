@@ -10,10 +10,8 @@ const SegmentQuadratic{N} = Union{AffineQuadratic{N,0,Float64},AffineQuadratic{N
 """
 One feature of an input sub-simplex: the quadratic distance formula that
 applies within `validity`, and `face` -- the actual sub-simplex (an
-element of `P(VertexIdx)`) this feature represents. Dimension-generic
-analogue of the 2D prototype's `Feature`, generalized just enough to cover
-segments (points still work too, with `validity = HalfSpace{N,Float64}[]`,
-i.e. valid everywhere -- exactly what G1 already assumed implicitly).
+element of `P(VertexIdx)`) this feature represents. A point feature has
+`validity = HalfSpace{N,Float64}[]` (valid everywhere).
 """
 struct GFeature{N}
     quad::SegmentQuadratic{N}
@@ -25,8 +23,7 @@ end
 The three features of a segment from `pa` (vertex `idxa`) to `pb` (vertex
 `idxb`): "beyond a" and "beyond b" (point features, each valid only past
 its own endpoint), and the interior (a line feature, valid only in the
-strip between the two endpoints). Direct generalization of the 2D
-prototype's segment case in `features()`.
+strip between the two endpoints).
 """
 function segment_features(pa::Pt{N,Float64}, pb::Pt{N,Float64}, idxa::VertexIdx, idxb::VertexIdx) where {N}
     d = pb - pa
@@ -54,8 +51,8 @@ function segment_features(pa::Pt{N,Float64}, pb::Pt{N,Float64}, idxa::VertexIdx,
 end
 
 """
-The single feature of an isolated point (vertex `idx`): valid everywhere,
-matching every point comparison G1 already did. Lets point and segment
-sub-simplices be handled through the same `GFeature` machinery.
+The single feature of an isolated point (vertex `idx`): valid everywhere.
+Lets point and segment sub-simplices be handled through the same
+`GFeature` machinery.
 """
 point_feature(p::Pt{N,Float64}, idx::VertexIdx) where {N} = GFeature{N}(AffineQuadratic(p), HalfSpace{N,Float64}[], Set([idx]))

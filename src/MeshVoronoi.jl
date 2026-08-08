@@ -11,6 +11,8 @@ include("geometry/convex_hull.jl")
 include("complex/cell.jl")
 include("complex/bbox.jl")
 include("algorithm/clip.jl")
+include("algorithm/ruled_quadric.jl")
+include("algorithm/sweep_topology.jl")
 include("algorithm/two_points.jl")
 include("algorithm/multi_points.jl")
 include("algorithm/features.jl")
@@ -22,9 +24,11 @@ export Quadric, evaluate, to_quadric, bisector
 export Interval, straddles_zero, interval_contains
 export Exact, to_interval, to_exact, exact_sign, symbolic_tiebreak
 export VertexIdx, Label, CellNode, CellComplex, add_cell!, supercells, descendant_points
+export record_exact_tie!, exact_ties
 export set_label!, supersede!, resolve
 export face_dim, face_specs, immediate_subface_specs, init_bbox_complex, init_hull_offset_complex
 export clip_by_hyperplane!, quadric_crossing_point, edge_crossings, is_curved
+export sweep_topology_check
 export polygon_vertices_2d, point_in_polygon_2d, in_bbox, find_containing_cell, find_hover_target, edge_distance, edge_polyline, plot_cells_2d
 export BVH, build_bvh, find_containing_cell_bvh
 export padded_bbox, two_points_complex, brute_force_label_two_points

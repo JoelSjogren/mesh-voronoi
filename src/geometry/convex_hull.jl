@@ -1,16 +1,8 @@
 """
-The convex hull of `points` (2D), returned as its vertices in
-counter-clockwise order, each appearing once (collinear points along a hull
-edge are dropped, keeping only genuine corners). Andrew's monotone chain:
-sort by `(x,y)`, then build the lower and upper chains independently, each
-by a simple stack scan that pops the last point whenever it would make a
-non-left (clockwise or straight) turn -- the standard `O(n log n)`
-construction, no dependency needed for it.
-
-Requires at least 3 affinely-independent points among `points` (the generic
-case this project targets, per the project's own scope notes on generic vs
-degenerate input) -- errors otherwise, rather than silently returning a
-degenerate (0- or 1-dimensional) "hull".
+The convex hull of `points` (2D), vertices in counter-clockwise order
+(collinear points along an edge dropped). Andrew's monotone chain.
+Requires at least 3 affinely-independent points -- errors otherwise rather
+than silently returning a degenerate hull.
 """
 function convex_hull_2d(points::Vector{Pt{2,Float64}})
     pts = sort(unique(points); by=p -> (p[1], p[2]))
@@ -36,19 +28,13 @@ function convex_hull_2d(points::Vector{Pt{2,Float64}})
 end
 
 """
-The polygon obtained by pushing every edge of a convex polygon `hull`
-(vertices in counter-clockwise order, as `convex_hull_2d` returns) outward
-along its own outward normal by a fixed distance `D`, then re-intersecting
-each pair of adjacent offset edges for the new vertices -- see the
-"layer at infinity" planning report for why this (not scaling the hull by a
-factor about a fixed point, which can misplace a vertex relative to its own
-normal cone -- confirmed by a concrete counterexample there) is the
-construction that's exact for an arbitrary convex hull, unconditionally.
-
-Returns the offset polygon's vertices, in the same cyclic order as `hull`
-(`offset[i]` is the new vertex corresponding to the offset lines of edges
-`hull[i-1]->hull[i]` and `hull[i]->hull[i+1]` meeting -- i.e. it "belongs
-to" `hull[i]`'s own normal cone, the `<hull[i],∞>` label).
+The polygon from pushing every edge of a convex polygon `hull`
+(counter-clockwise, as `convex_hull_2d` returns) outward along its own
+normal by `D`, then re-intersecting adjacent offset edges for the new
+vertices -- exact for an arbitrary convex hull, unlike scaling about a
+fixed point (which can misplace a vertex relative to its own normal cone;
+confirmed by a concrete counterexample). `offset[i]` belongs to `hull[i]`'s
+own normal cone.
 """
 function offset_polygon(hull::Vector{Pt{2,Float64}}, D::Float64)
     n = length(hull)

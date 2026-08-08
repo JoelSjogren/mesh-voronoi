@@ -15,7 +15,9 @@ using LinearAlgebra
     include("test_supersede.jl")
     include("test_multi_points.jl")
     include("test_3d_segments.jl")
+    include("test_sweep_topology.jl")
     include("test_segments.jl")
     include("test_tie_boundary.jl")
+    include("test_exact_ties.jl")
     include("test_stress_regressions.jl")
 end

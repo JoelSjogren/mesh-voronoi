@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi-nd &mdash; a genuine tie point breaks label consistency across a face</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 980px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .step { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+  .step img {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+  }
+  .step .desc { flex: 1; min-width: 260px; }
+  .step .desc h3 { margin-top: 0; font-size: 1rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  pre {
+    background: color-mix(in srgb, var(--bad) 8%, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .legend { display: flex; gap: 1.2rem; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); margin-top: 0.6rem; }
+  .swatch { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; margin-right: 0.35rem; vertical-align: -1px; }
+  .swatch.line { border-radius: 2px; width: 1.1rem; height: 0.3rem; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>mesh-voronoi-nd &mdash; a genuine tie point breaks label consistency across a face</h1>
+  <div class="sub">One-off investigation report, generated from a live run of the actual construction code (not a mockup) &mdash; see the live dashboard for ongoing test status. This page replaces an earlier report about the same repro's own non-manifold-cap bug, which is now fixed.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card" style="border-color: var(--good);">
+    <h2><span class="badge good">partially fixed</span> propagating the walk's own side instead of re-deriving it per edge</h2>
+    <p>
+      The face-level inconsistency below (<code>face 1382</code>'s own edges disagreeing) is fixed:
+      <code>clip_flat_face_3d!</code>/<code>clip_curved_face_3d!</code> now carry the side of
+      whichever vertex the boundary walk most recently arrived at forward to the next edge, instead
+      of independently re-asking the shared label for every edge's own two endpoints. Past the very
+      first edge, a crossing is the <em>only</em> thing allowed to flip the side &mdash; exactly what
+      the surrounding code already claimed to do, just not quite what it implemented. A cached edge's
+      own already-committed side still wins if the two ever disagree (nothing already baked into the
+      complex gets silently reinterpreted).
+    </p>
+    <p>
+      This exact repro now gets past face 1382 cleanly, then fails a <em>fourth</em> way &mdash; the
+      same kind of disagreement, one level up: a <em>different</em> face, reached from a
+      <em>different</em> top-level cell that also happens to touch the same near-tied vertex, still
+      disagrees with what this walk decided. The fix is correctly scoped to one face's own walk; it
+      was never going to reconcile the same vertex across independent walks in different cells &mdash;
+      that's the same shape of problem as an already-known, separately-tracked open issue
+      (<code>sweep_topology_check</code>'s "shared boundary represented differently on its two sides"
+      finding). Three-segment stress success: 49/150 &rarr; <strong>50/150</strong>, zero label
+      mismatches maintained. Small, real, and honestly not the whole story.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Summary (as first filed)</h2>
+    <p>
+      This is the exact three-segment configuration an earlier report on this same page was built
+      around. That report's own bug &mdash; a non-manifold cap crashing construction outright &mdash;
+      is fixed now, and so is a related bug it went on to expose (a face with a hole in its own
+      boundary). This <em>same</em> input now gets substantially further through construction than
+      it ever has, and then fails a third way: <code>clip_flat_face_3d!: face 1382's own edges
+      disagree on side despite finding no crossing anywhere &mdash; a genuine inconsistency</code>.
+    </p>
+    <p>
+      <span class="badge bad">open</span> Root-caused precisely (not just reproduced) below: a
+      genuine near-tie point, resolved two different, disagreeing ways by two different edges that
+      both touch it, because one edge's own local correction never gets shared with the other.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Setup</h2>
+    <p>
+      Same three random segments as the earlier report on this page &mdash; found by scanning random
+      seeds in order and kept because it was the first hit, not hand-picked to look good. Built
+      through the library's own <code>multi_complex</code>, the same path every test uses.
+    </p>
+    <div class="legend">
+      <span><span class="swatch" style="background:#d1453b"></span>segment 1</span>
+      <span><span class="swatch" style="background:#2e8b57"></span>segment 2</span>
+      <span><span class="swatch" style="background:#4169e1"></span>segment 3</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 1 &mdash; the input</h2>
+    <div class="step">
+      <img src="/images/report_tiebreak_step1.png" alt="Step 1: the three input segments">
+      <div class="desc">
+        <p>
+          The same three segments as before. Inserting the third one still fails &mdash; but now for
+          a reason that has nothing to do with the cap's own topology; it happens one step earlier,
+          while a single ordinary flat box face is being clipped.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 2 &mdash; the face that fails, colored by side</h2>
+    <div class="step">
+      <img src="/images/report_tiebreak_step2.png" alt="Step 2: face 1382's own boundary, colored by side">
+      <div class="desc">
+        <p>
+          One flat box face (id 1382, an ordinary quadrilateral-ish polygon by this point in
+          construction &mdash; eight edges after earlier cuts), restricted to the plane of the third
+          segment's own bisector. No crossing was found anywhere along its boundary, which is
+          supposed to mean the whole face sits cleanly on one side. Seven of its eight edges (blue)
+          agree it's the "a" side. One (crimson, barely visible at this scale &mdash; see Step 3)
+          insists it's the "b" side instead, with nothing between them.
+        </p>
+        <div class="legend">
+          <span><span class="swatch line" style="background:#4682b4"></span>edge says "a-side" (7 of 8)</span>
+          <span><span class="swatch line" style="background:#d1453b"></span>edge says "b-side" (1 of 8)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 3 &mdash; the two vertices the odd edge connects</h2>
+    <div class="step">
+      <img src="/images/report_tiebreak_step3.png" alt="Step 3: zoom on the disagreeing edge and its two endpoints">
+      <div class="desc">
+        <p>
+          Zoomed in on the crimson edge from Step 2 and its two endpoints. The orange vertex
+          evaluates to <code>-9.9&times;10&#8315;&sup1;&#8308;</code> against the third segment's own
+          bisector, restricted to this face's plane &mdash; indistinguishable from exactly zero: a
+          genuine tie, this vertex sits (numerically) right on the boundary between the two sides.
+          The black vertex evaluates to <code>8.23</code> &mdash; nowhere near zero, completely
+          unambiguous.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-color: var(--bad);">
+    <h2>What's actually wrong</h2>
+    <p>
+      Every edge's own side comes from asking a shared, precomputed label &mdash; "is this vertex
+      already known to be on the A side?" &mdash; for each of its two endpoints. When both endpoints
+      agree, the edge just uses that. When they <em>disagree</em> and no actual crossing explains why,
+      there's a fallback: trust whichever endpoint's own raw evaluation is less ambiguous (bigger
+      in magnitude), and let <em>that</em> decide the edge's side, overriding the shared label
+      locally. That's exactly what happened to the crimson edge in Step 2: its two endpoints'
+      shared labels disagreed, no crossing was found between them, so it deferred to the black
+      vertex's own unambiguous <code>8.23</code> over the orange vertex's own essentially-zero
+      value &mdash; a reasonable, deliberate call in isolation.
+    </p>
+    <p>
+      The bug is what happens <em>next</em>. That correction is local to the one edge that made
+      it &mdash; it's never written back to the shared label the orange vertex carries everywhere
+      else. A <em>different</em> edge touching that same orange vertex (part of the same face's own
+      boundary, cached from an earlier, sibling face's own independent clip) never re-examines
+      anything; it just trusts the shared label directly, and gets the opposite answer. Both
+      resolutions are locally defensible. They can't both be used on the same face's own boundary
+      walk without it falling apart, which is exactly what the "edges disagree on side" error is
+      catching &mdash; correctly, just with no way to recover once it's happened.
+    </p>
+    <p>
+      This is a real, close cousin of an already-known open issue in this codebase (a "shared
+      boundary represented differently on its two sides" defect <code>sweep_topology_check</code>
+      already flags at both <code>N=2</code> and <code>N=3</code>, tracked separately) &mdash; the
+      same underlying shape: a genuine near-degenerate configuration resolved two different,
+      locally-reasonable ways by two different pieces of code that never compare notes.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Reproducing this</h2>
+    <p>The exact repro, as run:</p>
+    <pre>entries = [
+    (:segment, SVector(-4.0086, 2.0198, 0.0326), SVector(3.7584, 4.5347, 0.0781), 1, 2),
+    (:segment, SVector(2.8975, -4.2875, -3.6162), SVector(-1.0681, -3.2227, 3.4416), 3, 4),
+    (:segment, SVector(3.2230, 4.7942, 4.8196), SVector(4.8292, 0.2372, 0.8080), 5, 6),
+]
+cx, feats = multi_complex(entries, Val(3))
+# ERROR: clip_flat_face_3d!: face 1382's own edges disagree on side despite
+#        finding no crossing anywhere -- a genuine inconsistency, not something
+#        this function knows how to resolve</pre>
+  </div>
+
+</main>
+</body>
+</html>

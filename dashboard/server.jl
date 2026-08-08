@@ -111,6 +111,8 @@ const REPORT_LIST = [
     ("hole-topology", "report_hole_topology.html", "Cell territory with a hole", "2026-07-30"),
     ("triangulation-difficulties", "report_triangulation_difficulties.html", "Triangulation difficulties (historical)", "2026-07-30"),
     ("infinity-layer", "report_infinity_layer.html", "Layer at infinity (planning)", "2026-08-04"),
+    ("nonmanifold-cap", "report_nonmanifold_cap.html", "3D: a genuine tie point (3 segments)", "2026-08-07"),
+    ("tie-gallery", "report_tie_gallery.html", "Every k-way tie locus, n=2 and n=3", "2026-08-08"),
 ]
 const REPORTS = Dict(key => file for (key, file, _, _) in REPORT_LIST)
 

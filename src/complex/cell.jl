@@ -1,51 +1,25 @@
 const VertexIdx = Int
 
-"""
-A cell's label: the set of input sub-simplices tied there (see the project
-plan's "sub/super-cell duality" discussion). For the points-only milestone
-(G1), every input sub-simplex is just a single vertex, so every label
-entry is a singleton `Set{VertexIdx}`.
-"""
+"""A cell's label: the set of input sub-simplices tied there."""
 const Label = Set{Set{VertexIdx}}
 
 """
-One stored cell of a `CellComplex{N}`: its dimension, its label, and the
-ids of its immediate *subcells* (its boundary pieces -- see the plan for
-why this is the direction that needs explicit indexing, unlike a mesh's
-sub-simplices). Per the chosen "recursive, bottom-up" geometry convention,
-a cell's shape *is* the union of its subcells' shapes; the only cells that
-carry their own independent geometric data beyond that are 0-cells (a
-single point) and, since G2, 1-cells that lie on a genuinely curved
-bisector (`curve`, `nothing` for a straight edge) -- a CW-complex's 1-cells
-are attached via an arbitrary continuous map, not necessarily a straight
-line, and G1's all-hyperplane construction was simply the special case
-where that map always happened to be linear (so `curve === nothing`
-always, and every downstream consumer could safely treat an edge as the
-straight segment between its two endpoints). G2 introduces bisectors
-(point-vs-segment-interior, etc.) whose zero set is a genuine curve
-(a parabola in 2D), so a 1-cell now needs to remember *which* quadric it
-lies on for anything that needs its true shape (rendering, sampling a
-curved boundary) rather than a chord approximation.
+One stored cell of a `CellComplex{N}`: its dimension, label, and the ids
+of its immediate *subcells* (boundary pieces). A cell's shape *is* the
+union of its subcells' shapes; the only cells with independent geometric
+data beyond that are 0-cells (a point) and dim=1 cells on a genuinely
+curved bisector (`curve`, `nothing` for a straight edge).
 
-A cell's own axis-aligned bounding box is part of its identity, not a
-derived afterthought: two live cells sharing a label are only genuinely
-"the same place" if their bounding boxes are disjoint from every *other*
-same-label cell (see `assert_label_bbox_invariant`) -- so `bbox_lo`/
-`bbox_hi` are computed once, bottom-up, when a node is created (`add_cell!`
-below), the same way its geometry itself is defined recursively from its
-subcells. This makes the box a cheap O(1) field lookup everywhere it's
-needed (an invariant check, a point-location fast-reject, a BVH leaf)
-instead of an O(subtree size) walk repeated on every call.
+A cell's own bounding box is part of its identity, not derived: two live
+cells sharing a label are only genuinely "the same place" if their boxes
+are disjoint from every other same-label cell (`assert_label_bbox_invariant`).
+Computed once, bottom-up, at creation (`add_cell!`) -- an O(1) lookup
+everywhere it's needed instead of an O(subtree) walk.
 
-The box is *conservative*, not always perfectly tight: if a neighboring
-insertion later subdivides one of this cell's subcells via `supersede!`
-(patching this node's own `subcells` list in place without touching this
-node otherwise -- see `supersede!`'s docstring), the cached box is never
-recomputed. That's safe rather than stale-and-wrong, because subdividing a
-piece can only shrink (or preserve) its own contribution to the union --
-never grow it beyond what it started as -- so every consumer here only
-ever needs "never an underestimate," which the box keeps for its whole
-lifetime.
+The box is conservative, not always tight: if a later insertion subdivides
+one of this cell's subcells via `supersede!`, the cached box is never
+recomputed -- safe because subdividing a piece can only shrink its own
+contribution to the union, never grow it.
 """
 mutable struct CellNode{N}
     dim::Int
@@ -53,66 +27,74 @@ mutable struct CellNode{N}
     subcells::Vector{Int}                 # node ids of immediate boundary cells (empty for dim=0)
     point::Union{Nothing,Pt{N,Float64}}   # set only for dim=0
     curve::Union{Nothing,Quadric{N,Float64}}   # set only for a dim=1 cell that lies on a non-linear quadric
+    # `N=3` dim=1 edge confined to *two* independent curved surfaces at
+    # once (a genuine space curve, unlike every other curved edge here,
+    # which is confined to one quadric plus one flat plane). `ruled_frame`/
+    # `ruled_trace_crossing` (clip.jl) use whichever of Q1/Q2 is rank<=2
+    # and indefinite to parametrize the edge and locate a third quadric's
+    # crossing along it.
+    curve2::Union{Nothing,Quadric{N,Float64}}
     bbox_lo::Pt{N,Float64}
     bbox_hi::Pt{N,Float64}
+    # Set only for a dim=0 vertex `clip_by_hyperplane!`'s vertex loop has
+    # found *exactly* tied (exact_sign returned a genuine 0) before
+    # symbolic_tiebreak picked a side -- the first-class record of the tie
+    # the resolution would otherwise discard. `nothing` (not an empty
+    # Label) in the common untied case, to stay allocation-free.
+    exact_ties::Union{Nothing,Label}
+end
+
+"""Record `atom` as exactly tied at vertex `node` -- see `CellNode.exact_ties`."""
+function record_exact_tie!(node::CellNode, atom::Set{VertexIdx})
+    ties = node.exact_ties === nothing ? Label() : node.exact_ties
+    push!(ties, atom)
+    node.exact_ties = ties
+    return nothing
 end
 
 """
 The output complex under construction: every stored cell (all dimensions
-at once, per the plan -- unlike a mesh, nothing here is derivable from a
-"maximal only" subset), indexed both by a stable integer id and by label
-(`label_index`, supporting more than one disconnected piece per label).
+at once), indexed both by stable integer id and by label (`label_index`,
+supporting more than one disconnected piece per label).
 
-`referenced_by[s]` lists every currently-live node that has `s` as an
-immediate subcell -- the reverse of `nodes[p].subcells` -- maintained so
-that when `s` is superseded, every one of its parents can be patched
-immediately (see `supersede!`). `superseded_by[old]` records what a dead
-node was replaced by, kept (rather than discarded) so any code that still
-holds an old id from before a supersession can resolve it via `resolve`.
+`referenced_by[s]` lists every live node with `s` as an immediate subcell
+(the reverse of `nodes[p].subcells`), so when `s` is superseded, every
+parent can be patched immediately (`supersede!`). `superseded_by[old]`
+records what a dead node was replaced by, so a caller holding an old id
+can resolve it via `resolve`.
 
-This keeps the complex "locally monotone": once a cell is created its
-label and subcells are always either exactly right or explicitly marked
-as superseded with a resolvable replacement, never silently stale --
-adjacent cells sharing boundary structure (the normal case once
-multi-point insertion is in play, not just the single-hyperplane-into-a-
-pristine-bbox case) can be patched in place rather than requiring a
-separate reconciliation pass after the fact.
+Keeps the complex "locally monotone": a cell's label/subcells are always
+either exactly right or explicitly superseded with a resolvable
+replacement, never silently stale.
 """
 mutable struct CellComplex{N}
     nodes::Vector{CellNode{N}}
     label_index::Dict{Label,Vector{Int}}
     referenced_by::Dict{Int,Vector{Int}}
     superseded_by::Dict{Int,Vector{Int}}
+    # (origin, e1, e2) local frame of a flat N=3 face, keyed by node id --
+    # populated lazily by `flat_face_frame_cached!`, propagated to
+    # children when split (same plane both pieces). Needed because a
+    # two-vertex "bigon" piece (one straight edge, one curved trace edge)
+    # can't pin down a 2D frame from its own boundary points alone.
+    face_frames::Dict{Int,NTuple{3,Pt{N,Float64}}}
 end
 
-CellComplex{N}() where {N} = CellComplex{N}(CellNode{N}[], Dict{Label,Vector{Int}}(), Dict{Int,Vector{Int}}(), Dict{Int,Vector{Int}}())
+CellComplex{N}() where {N} = CellComplex{N}(CellNode{N}[], Dict{Label,Vector{Int}}(), Dict{Int,Vector{Int}}(), Dict{Int,Vector{Int}}(), Dict{Int,NTuple{3,Pt{N,Float64}}}())
+
+"""All feature atoms ever recorded exactly tied at `id` (`nothing` if none)."""
+exact_ties(cx::CellComplex, id::Int) = cx.nodes[id].exact_ties
 
 """
-Expands the straight-chord box `(lo, hi)` to also cover the true extent of
-`curve`'s own arc between two points `p1`, `p2` known to lie on it -- a
-genuinely curved edge (a parabolic bisector, in this codebase's only
-curved case so far) can bulge outside the chord between its endpoints, so
-the chord's own box alone can *underestimate* the cell's true extent.
-
-A coordinate is extremal along an implicit curve `Q(x,y)=0` exactly where
-the *other* coordinate's partial derivative vanishes (check against a
-circle `Q=x²+y²-1`: `∂Q/∂y=2y=0` gives `y=0`, i.e. `x=±1` -- its true
-x-extrema). Each candidate is found by substituting that linear constraint
-into `Q=0` (a quadratic in the remaining free coordinate) via
-`quadratic_roots`, and kept only if it actually falls on the p1-p2 arc --
-not merely somewhere else on the same conic -- checked via `curve`'s own
-natural single-valued axis (`curve_natural_axis`, `plot2d.jl`), not a raw
-x/y coordinate range: an earlier version of this check used whichever
-coordinate varies more between `p1` and `p2` (matching `tessellate_curve`'s
-own former convention), which rejects a genuine candidate whenever the
-arc's own turning point falls between `p1` and `p2` -- confirmed as a real
-bug in the sibling functions that used the same convention (a
-self-intersecting rendered polygon, and a "0 crossings" construction
-failure), so fixed here the same way even though no concrete repro forced
-the issue here specifically. That check deliberately is *not* "is the
-extremal value itself within the endpoints' range" -- the whole point of a
-real bulge is that its extremal coordinate lies *outside* that range;
-it's the arc's own natural-axis projection that must stay inside it.
+Expands chord box `(lo,hi)` to cover the true extent of `curve`'s own arc
+between `p1`,`p2` -- a curved edge can bulge outside its chord, so the
+chord's box alone can underestimate. A coordinate is extremal along
+`Q(x,y)=0` where the *other* coordinate's partial derivative vanishes;
+each candidate is kept only if it falls on the p1-p2 arc, checked via
+`curve`'s own natural axis (`curve_natural_axis`) rather than raw x/y
+range -- using whichever coordinate varies more between `p1`,`p2` instead
+rejects a genuine candidate whenever the arc's turning point falls between
+them (a real bug once found in sibling functions using that convention).
 """
 function expand_bbox_for_curve(lo::Pt{2,Float64}, hi::Pt{2,Float64}, curve::Quadric{2,Float64}, p1::Pt{2,Float64}, p2::Pt{2,Float64})
     M, b = curve.M, curve.b
@@ -151,20 +133,13 @@ function expand_bbox_for_curve(lo::Pt{2,Float64}, hi::Pt{2,Float64}, curve::Quad
 end
 
 """
-The bounding box of a brand-new node with the given `dim`/`subcells`/
-`point`/`curve`, computed bottom-up from its already-cached-at-creation
-subcells (`dim==0` is the base case: a single point). Curved-edge extrema
-(see `expand_bbox_for_curve`) are only handled at `dim==1, N==2`, this
-codebase's only case with genuinely curved bisectors so far, where the
-reasoning for why the plain subcell-union box would otherwise
-*underestimate* is concrete (a curved edge can bulge outside the chord
-between its two endpoints) and the fix is exact. A hypothetical future
-curved cell of dimension >= 2 (a curved *surface*, e.g. at N=3) is a
-genuinely different question -- its boundary's own box does not obviously
-bound its interior sag the way two endpoints bound a 1D arc -- and falls
-back to the untightened subcell-union box here unexamined; don't assume
-that's still conservative without rechecking when that case is actually
-built (G3, task #21, hasn't reached it yet).
+Bounding box of a brand-new node, computed bottom-up from its subcells
+(`dim==0`: a single point). Curved-edge extrema (`expand_bbox_for_curve`)
+are only handled at `dim==1, N==2` -- a curved *surface* (dim>=2, e.g.
+N=3) falls back to the untightened subcell-union box unexamined; its own
+boundary box doesn't obviously bound its interior sag the way two
+endpoints bound a 1D arc, so don't assume this is still conservative
+without rechecking.
 """
 function new_cell_bbox(cx::CellComplex{N}, dim::Int, subcells::Vector{Int}, point, curve) where {N}
     dim == 0 && return point, point
@@ -177,9 +152,9 @@ function new_cell_bbox(cx::CellComplex{N}, dim::Int, subcells::Vector{Int}, poin
     return lo, hi
 end
 
-function add_cell!(cx::CellComplex{N}, dim::Int, label::Label, subcells::Vector{Int}, point=nothing; curve=nothing) where {N}
+function add_cell!(cx::CellComplex{N}, dim::Int, label::Label, subcells::Vector{Int}, point=nothing; curve=nothing, curve2=nothing) where {N}
     bbox_lo, bbox_hi = new_cell_bbox(cx, dim, subcells, point, curve)
-    push!(cx.nodes, CellNode{N}(dim, label, subcells, point, curve, bbox_lo, bbox_hi))
+    push!(cx.nodes, CellNode{N}(dim, label, subcells, point, curve, curve2, bbox_lo, bbox_hi, nothing))
     id = length(cx.nodes)
     push!(get!(() -> Int[], cx.label_index, label), id)
     for s in subcells
@@ -188,12 +163,7 @@ function add_cell!(cx::CellComplex{N}, dim::Int, label::Label, subcells::Vector{
     return id
 end
 
-"""
-Update `id`'s label (e.g. once it's known which input point(s) win there),
-keeping `label_index` consistent -- removing `id` from its old label's
-bucket (initially empty, for a freshly-`init_bbox_complex`'d node) and
-adding it to the new one.
-"""
+"""Update `id`'s label, keeping `label_index` consistent."""
 function set_label!(cx::CellComplex, id::Int, label::Label)
     node = cx.nodes[id]
     old = node.label
@@ -207,15 +177,11 @@ function set_label!(cx::CellComplex, id::Int, label::Label)
 end
 
 """
-Mark `old_id` as superseded by `new_ids` (e.g. because it was just split by
-a new bisector), and immediately patch every currently-live cell that
-referenced it as a subcell: `old_id` is replaced in-place by `new_ids` in
-each parent's `subcells` list (and `referenced_by` updated to match).
-`old_id` is also removed from its label's `label_index` bucket -- it's no
-longer a live cell, just a resolvable historical reference.
-
-This is the one place stale-reference propagation happens; every other
-piece of code can assume `nodes[p].subcells` is always current.
+Mark `old_id` as superseded by `new_ids`, and immediately patch every
+live cell that referenced it as a subcell in place. `old_id` is removed
+from `label_index` -- no longer live, just a resolvable historical
+reference. The one place stale-reference propagation happens; everywhere
+else can assume `nodes[p].subcells` is always current.
 """
 function supersede!(cx::CellComplex, old_id::Int, new_ids::Vector{Int})
     cx.superseded_by[old_id] = new_ids
@@ -230,8 +196,22 @@ function supersede!(cx::CellComplex, old_id::Int, new_ids::Vector{Int})
         idx = findfirst(==(old_id), pnode.subcells)
         idx === nothing && continue   # already patched (shouldn't happen, but be defensive)
         splice!(pnode.subcells, idx, new_ids)
+        # A `new_ids` entry can coincide with something `pnode` already
+        # references independently (e.g. `weld_duplicate_edges!` merging
+        # two separately-created edges that turn out to be the same
+        # geometric edge into one canonical id) -- left alone, the splice
+        # above leaves the same subcell referenced twice. Only collapsed
+        # at dim>=2, where `subcells` is an unordered set of boundary
+        # pieces (never legitimately repeated) -- a dim=1 edge's own
+        # `subcells` is its two *positional* endpoints, where a repeat
+        # means something different (a zero-length weld edge) and must
+        # not be silently collapsed.
+        if pnode.dim >= 2 && length(pnode.subcells) != length(Set(pnode.subcells))
+            unique!(pnode.subcells)
+        end
         for nid in new_ids
-            push!(get!(() -> Int[], cx.referenced_by, nid), p)
+            refs = get!(() -> Int[], cx.referenced_by, nid)
+            p in refs || push!(refs, p)
         end
     end
     delete!(cx.referenced_by, old_id)
@@ -239,13 +219,9 @@ function supersede!(cx::CellComplex, old_id::Int, new_ids::Vector{Int})
 end
 
 """
-Resolve `id` to the currently-live node id(s) it corresponds to: `[id]` if
-it was never superseded, or the (recursively resolved) replacement ids
-otherwise. Needed by any code that might be holding an id captured before
-a later supersession -- everything reached purely through `nodes[p].subcells`
-is already current thanks to `supersede!`'s eager patching, so this is
-mainly for callers holding onto an id across some other boundary (e.g.
-across a whole `insert_point!` call).
+Resolve `id` to its currently-live node id(s): `[id]` if never superseded,
+or the recursively-resolved replacements otherwise -- for callers holding
+an id captured before a later supersession.
 """
 function resolve(cx::CellComplex, id::Int)
     haskey(cx.superseded_by, id) || return [id]
@@ -256,11 +232,7 @@ function resolve(cx::CellComplex, id::Int)
     return out
 end
 
-"""
-The cells `label` bounds -- free, per the plan: enumerable directly as the
-stored cells whose label is a (not necessarily proper) subset of `label`,
-no index required.
-"""
+"""The cells `label` bounds: stored cells whose label is a subset of `label`."""
 function supercells(cx::CellComplex, label::Label)
     out = Label[]
     n = length(label)
@@ -272,12 +244,7 @@ function supercells(cx::CellComplex, label::Label)
     return out
 end
 
-"""
-All descendant 0-cells (actual points) of node `id`, found by walking the
-`subcells` tree down to its leaves. For a flat (G1, all-hyperplane) cell
-this is exactly its vertex set -- enough to determine how a new hyperplane
-crosses it.
-"""
+"""All descendant 0-cells (points) of node `id`, walking `subcells` to its leaves."""
 function descendant_points(cx::CellComplex{N}, id::Int) where {N}
     node = cx.nodes[id]
     node.dim == 0 && return [node.point]

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Every k-way tie locus, n=2 and n=3</title>
+<style>
+  :root {
+    --paper: #eef2f2; --paper-raised: #ffffff; --ink: #16202a; --ink-soft: #3c4a52; --ink-mute: #6b7b82;
+    --rule: #c7d1d0; --rule-soft: #dbe2e1; --accent: #354fba; --accent-wash: #e3e7f6;
+    --shadow: 0 1px 0 rgba(20,30,35,0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #10161a; --paper-raised: #161e23; --ink: #e7edf0; --ink-soft: #c1ccd1; --ink-mute: #86959c;
+      --rule: #2b3941; --rule-soft: #212d34; --accent: #7c92e8; --accent-wash: #1c2440;
+      --shadow: 0 1px 0 rgba(0,0,0,0.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #10161a; --paper-raised: #161e23; --ink: #e7edf0; --ink-soft: #c1ccd1; --ink-mute: #86959c;
+    --rule: #2b3941; --rule-soft: #212d34; --accent: #7c92e8; --accent-wash: #1c2440;
+  }
+  :root[data-theme="light"] {
+    --paper: #eef2f2; --paper-raised: #ffffff; --ink: #16202a; --ink-soft: #3c4a52; --ink-mute: #6b7b82;
+    --rule: #c7d1d0; --rule-soft: #dbe2e1; --accent: #354fba; --accent-wash: #e3e7f6;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  h1, h2 { font-family: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif; text-wrap: balance; font-weight: 400; color: var(--ink); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 2.2rem; }
+  .topbar { background: var(--paper-raised); border-bottom: 1px solid var(--rule); }
+  .topbar .wrap {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.4rem 1.4rem;
+    padding-top: 0.6rem; padding-bottom: 0.6rem;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace; font-size: 0.78rem;
+  }
+  .masthead { padding: 3.2rem 0 2.4rem; border-bottom: 1px solid var(--rule); }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent); margin: 0 0 1rem;
+  }
+  .kicker::before { content: ""; width: 1.6rem; height: 1px; background: var(--accent); display: inline-block; }
+  .masthead h1 { font-size: clamp(1.8rem, 1.3rem + 2vw, 2.7rem); line-height: 1.1; margin: 0 0 1rem; max-width: 26ch; }
+  .thesis { font-size: 1.05rem; color: var(--ink-soft); max-width: 62ch; margin: 0; }
+  .thesis code { font-family: ui-monospace, monospace; font-size: 0.92em; background: var(--rule-soft); padding: 0.1em 0.38em; border-radius: 3px; color: var(--ink-soft); }
+  section { padding: 2.6rem 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: none; }
+  .eyebrow {
+    font-family: ui-monospace, monospace; font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--ink-mute); margin: 0 0 0.4rem;
+  }
+  .section-title { font-size: 1.6rem; margin: 0 0 1.6rem; }
+  .k-row { margin-bottom: 2.2rem; }
+  .k-row:last-child { margin-bottom: 0; }
+  .k-label { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 0.8rem; }
+  .k-num { font-family: ui-monospace, monospace; font-size: 0.95rem; font-weight: 700; color: var(--accent); }
+  .k-sub { font-size: 0.85rem; color: var(--ink-mute); }
+  .tie-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.9rem; }
+  .tie-card {
+    margin: 0; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 6px;
+    overflow: hidden; box-shadow: var(--shadow);
+  }
+  .tie-card img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; }
+  .tie-card figcaption {
+    padding: 0.4rem 0.6rem; font-size: 0.74rem; color: var(--ink-mute); text-align: center;
+    border-top: 1px solid var(--rule-soft); background: var(--paper);
+  }
+  footer { padding: 2rem 0 3rem; }
+  footer p { color: var(--ink-mute); font-size: 0.82rem; max-width: 62ch; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="topbar"><div class="wrap"><!--NAV--><!--DATE--></div></div>
+<header class="masthead">
+  <div class="wrap">
+    <p class="kicker">tie-locus gallery &middot; n=2 and n=3</p>
+    <h1>Every possible {point, line, plane}<sup>k</sup> tie locus</h1>
+    <p class="thesis">
+      Each figure is a genuine simultaneous tie among <code>k</code> features (real code:
+      <code>AffineQuadratic</code> + <code>bisector</code>, not a mockup), placed so the marked
+      point sits exactly on the locus. A tie among <code>k</code> features generically has
+      codimension <code>k&minus;1</code>, so <code>k</code> runs from 1 (no tie yet) to
+      <code>n+1</code> (an isolated point &mdash; the generic vertex of the diagram). &laquo;plane&raquo;
+      only exists as a feature type at n=3, and isn't yet an insertable input to the incremental
+      construction &mdash; every case here is built directly from the same low-level quadric
+      machinery the construction itself uses, one level below it.
+    </p>
+  </div>
+</header>
+  <section>
+    <div class="wrap">
+      <p class="eyebrow">n = 2</p>
+      <h2 class="section-title">Every tie locus in the plane</h2>
+      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 1</span><span class="k-sub">the feature itself &mdash; no tie yet</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k1_P.png" alt="point" loading="lazy">
+          <figcaption>point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k1_L.png" alt="line" loading="lazy">
+          <figcaption>line</figcaption>
+        </figure>
+        </div>
+      </div>      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 2</span><span class="k-sub">codim 1 &rarr; dimension 1</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k2_PP.png" alt="point + point" loading="lazy">
+          <figcaption>point + point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k2_PL.png" alt="point + line" loading="lazy">
+          <figcaption>point + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k2_LL.png" alt="line + line" loading="lazy">
+          <figcaption>line + line</figcaption>
+        </figure>
+        </div>
+      </div>      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 3</span><span class="k-sub">codim 2 &rarr; an isolated point (the generic vertex)</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k3_PPP.png" alt="point + point + point" loading="lazy">
+          <figcaption>point + point + point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k3_PPL.png" alt="point + point + line" loading="lazy">
+          <figcaption>point + point + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k3_PLL.png" alt="point + line + line" loading="lazy">
+          <figcaption>point + line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n2_k3_LLL.png" alt="line + line + line" loading="lazy">
+          <figcaption>line + line + line</figcaption>
+        </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section>
+    <div class="wrap">
+      <p class="eyebrow">n = 3</p>
+      <h2 class="section-title">Every tie locus in space</h2>
+      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 1</span><span class="k-sub">the feature itself &mdash; no tie yet</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k1_P.png" alt="point" loading="lazy">
+          <figcaption>point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k1_L.png" alt="line" loading="lazy">
+          <figcaption>line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k1_Pl.png" alt="plane" loading="lazy">
+          <figcaption>plane</figcaption>
+        </figure>
+        </div>
+      </div>      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 2</span><span class="k-sub">codim 1 &rarr; dimension 2</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k2_PP.png" alt="point + point" loading="lazy">
+          <figcaption>point + point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k2_PL.png" alt="point + line" loading="lazy">
+          <figcaption>point + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k2_PPl.png" alt="point + plane" loading="lazy">
+          <figcaption>point + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k2_LL.png" alt="line + line" loading="lazy">
+          <figcaption>line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k2_LPl.png" alt="line + plane" loading="lazy">
+          <figcaption>line + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k2_PlPl.png" alt="plane + plane" loading="lazy">
+          <figcaption>plane + plane</figcaption>
+        </figure>
+        </div>
+      </div>      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 3</span><span class="k-sub">codim 2 &rarr; dimension 1</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PPP.png" alt="point + point + point" loading="lazy">
+          <figcaption>point + point + point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PPL.png" alt="point + point + line" loading="lazy">
+          <figcaption>point + point + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PPPl.png" alt="point + point + plane" loading="lazy">
+          <figcaption>point + point + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PLL.png" alt="point + line + line" loading="lazy">
+          <figcaption>point + line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PLPl.png" alt="point + line + plane" loading="lazy">
+          <figcaption>point + line + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PPlPl.png" alt="point + plane + plane" loading="lazy">
+          <figcaption>point + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_LLL.png" alt="line + line + line" loading="lazy">
+          <figcaption>line + line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_LLPl.png" alt="line + line + plane" loading="lazy">
+          <figcaption>line + line + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_LPlPl.png" alt="line + plane + plane" loading="lazy">
+          <figcaption>line + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k3_PlPlPl.png" alt="plane + plane + plane" loading="lazy">
+          <figcaption>plane + plane + plane</figcaption>
+        </figure>
+        </div>
+      </div>      <div class="k-row">
+        <div class="k-label"><span class="k-num">k = 4</span><span class="k-sub">codim 3 &rarr; an isolated point (the generic vertex)</span></div>
+        <div class="tie-grid">
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPPP.png" alt="point + point + point + point" loading="lazy">
+          <figcaption>point + point + point + point</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPPL.png" alt="point + point + point + line" loading="lazy">
+          <figcaption>point + point + point + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPPPl.png" alt="point + point + point + plane" loading="lazy">
+          <figcaption>point + point + point + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPLL.png" alt="point + point + line + line" loading="lazy">
+          <figcaption>point + point + line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPLPl.png" alt="point + point + line + plane" loading="lazy">
+          <figcaption>point + point + line + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPPlPl.png" alt="point + point + plane + plane" loading="lazy">
+          <figcaption>point + point + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PLLL.png" alt="point + line + line + line" loading="lazy">
+          <figcaption>point + line + line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PLLPl.png" alt="point + line + line + plane" loading="lazy">
+          <figcaption>point + line + line + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PLPlPl.png" alt="point + line + plane + plane" loading="lazy">
+          <figcaption>point + line + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PPlPlPl.png" alt="point + plane + plane + plane" loading="lazy">
+          <figcaption>point + plane + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_LLLL.png" alt="line + line + line + line" loading="lazy">
+          <figcaption>line + line + line + line</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_LLLPl.png" alt="line + line + line + plane" loading="lazy">
+          <figcaption>line + line + line + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_LLPlPl.png" alt="line + line + plane + plane" loading="lazy">
+          <figcaption>line + line + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_LPlPlPl.png" alt="line + plane + plane + plane" loading="lazy">
+          <figcaption>line + plane + plane + plane</figcaption>
+        </figure>
+        <figure class="tie-card">
+          <img src="/images/gallery_n3_k4_PlPlPlPl.png" alt="plane + plane + plane + plane" loading="lazy">
+          <figcaption>plane + plane + plane + plane</figcaption>
+        </figure>
+        </div>
+      </div>
+    </div>
+  </section>
+<footer>
+  <div class="wrap">
+    <p>Locus curves/surfaces of dimension &gt; 0 are point clouds from randomized Gauss&ndash;Newton
+    projection onto the shared bisector system, not a mesh &mdash; density, not exactness, conveys
+    the shape. The exact predicate kernel elsewhere in this project is a separate, exact code path.</p>
+  </div>
+</footer>
+</body>
+</html>

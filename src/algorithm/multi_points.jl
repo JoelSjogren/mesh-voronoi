@@ -1,13 +1,9 @@
 """
-The true tied-winner set at `pt`, found by direct distance comparison
-against every known input point -- necessary when welding duplicate
-vertices (see `weld_near_duplicate_vertices!`) because simply *union*-ing
-the duplicates' own labels does not always recover the full tie: each
-duplicate's label only reflects whichever single pairwise comparison its
-own originating clip happened to make, not the true multi-way tie a
-genuine higher-order Voronoi vertex represents. The G1 (points-only)
-counterpart to `recompute_feature_label` (segments.jl), which does the
-same thing for G2's flat feature list.
+The true tied-winner set at `pt`, by direct distance comparison against
+every input point -- needed because union-ing duplicate vertices' own
+labels doesn't always recover the full tie (each only reflects whichever
+single pairwise comparison created it). Points-only counterpart to
+`recompute_feature_label` (segments.jl).
 """
 function recompute_point_label(pt::Pt{N,Float64}, points::Dict{VertexIdx,Pt{N,Float64}}; atol=1e-9) where {N}
     ds = Dict(i => sum(abs2, pt - p) for (i, p) in points)
@@ -16,59 +12,29 @@ function recompute_point_label(pt::Pt{N,Float64}, points::Dict{VertexIdx,Pt{N,Fl
 end
 
 """
-Recomputes the true label of every live dim=0 vertex created *during this
-insertion* (id `>= first_new_id`) directly from its own position, welding
-together any that turn out to be numerically the same point along the way.
+Recomputes the true label of every live dim=0 vertex created during this
+insertion (id `>= first_new_id`), welding together any that turn out to
+be numerically the same point.
 
-Welding: this can genuinely happen even though the construction is
-logically correct -- both `insert_point!` (G1) and `insert_features!` (G2)
-clip each existing winner's top cell independently, so when two adjacent
-cells share a boundary edge that the new winner's bisector needs to split,
-*each* cell's clip recomputes where its own copy of that split happens
-using a *different* quadric (its own current winner vs. the new one -- not
-some single quadric tied to the shared edge itself). These two
-computations coincide only in exact arithmetic, precisely at a genuine
-multi-way tie point -- so floating-point rounding gives two
-distinct-but-nearly-identical points instead of the one true vertex.
+Welding is needed because two adjacent cells' independent clips against
+the same new winner compute a shared split point using different
+quadrics (each vs. its own current winner) -- these coincide only in
+exact arithmetic, so float rounding leaves two near-duplicate points
+instead of one true vertex.
 
-Recomputing every new vertex's label (not just welded ones) matters just as
-much, and for the same underlying reason: *any* newly created vertex's own
-label -- welded or not -- is only ever an artifact of whichever single
-pairwise clip created it (which side of *that one* comparison it fell on),
-never the full tie a genuine boundary point represents. A vertex approached
-from two different cells' own independent clips gets caught by the welding
-above and corrected; a vertex approached from only *one* side never
-becomes a "duplicate" at all and would otherwise keep that single
-one-sided label forever -- confirmed as a real, reachable gap (not just a
-theoretical one) on the outer boundary of a compactified complex, where a
-tie between two hull-adjacent points is, by construction, only ever
-discovered from one interior cell's own clip (there's no "other side" cell
-past the boundary to independently produce a matching duplicate). So every
-new vertex's label is recomputed from scratch via the caller-supplied
-`label_fn` (either `recompute_point_label` or `recompute_feature_label`,
-generalizing over G1/G2 -- this function itself doesn't need to know
-which), whether or not it turned out to have a duplicate.
+Every new vertex's label is recomputed from scratch, not just welded
+ones: any newly-created vertex's own label only reflects whichever single
+pairwise clip created it, never the full tie a genuine boundary point
+represents. A vertex approached from only one side (e.g. the outer
+boundary of a compactified complex, with no "other side" cell to produce
+a matching duplicate) never becomes a "duplicate" and would otherwise
+keep a one-sided label forever.
 
-Any edge left connecting a welded vertex to itself (a zero-length sliver, a
-direct side effect of the weld) is retired via `supersede!` with an empty
-replacement, the same way orphaned structure elsewhere in the complex is
-retired -- not a real geometric feature, and `polygon_vertices_2d`'s
-boundary walk works fine without it once both of its former neighbors
-resolve to the same shared vertex.
-
-Scoped to the vertices created this round (id `>= first_new_id`) plus
-whichever pre-existing ones the caller passes in `extra_verts` -- e.g. the
-descendants of a cell that got wholesale relabeled (a whole territory
-entirely overtaken by the new feature, `insert_point!`'s/`insert_features!`'s
-own "no split needed" shortcut) rather than actually clipped: that shortcut
-only sets the *cell's* own label, never cascading to its own vertices/edges,
-which is a real, reachable staleness bug of exactly the same shape as the
-one welding fixes for newly-created vertices -- a vertex that's genuinely
-now owned outright by the new feature otherwise keeps whatever label it had
-before, indefinitely, until *something* explicitly recomputes it. A vertex
-that's neither new nor explicitly listed here is assumed already correct
-(the invariant this function itself is responsible for maintaining, after
-every prior insertion).
+A zero-length sliver edge left by a weld is retired via `supersede!`.
+Scoped to vertices created this round plus whatever the caller passes in
+`extra_verts` -- e.g. descendants of a cell wholesale-relabeled (not
+clipped) by the caller's own "no split needed" shortcut, which only sets
+the cell's own label, never cascading to its subcells.
 """
 function weld_near_duplicate_vertices!(cx::CellComplex{N}, first_new_id::Int, label_fn; atol=1e-9, extra_verts=Int[]) where {N}
     verts = [id for id in first_new_id:length(cx.nodes) if !haskey(cx.superseded_by, id) && cx.nodes[id].dim == 0]
@@ -121,26 +87,19 @@ function weld_near_duplicate_vertices!(cx::CellComplex{N}, first_new_id::Int, la
 end
 
 """
-After vertices are welded above, two live edges created *during this
-insertion* can end up connecting the exact same pair of (now-canonical)
-endpoints without themselves being the same stored node -- the same root
-cause as duplicate vertices, one dimension up: independently clipping two
-adjacent cells against the same new winner can each create their own copy
-of what's geometrically the same shared cut boundary, rather than the two
-cells properly referencing one shared edge (the normal, intended
-architecture -- see `CellComplex`'s docstring). Left alone, each duplicate
-stays exclusively owned by a different cell, so `polygon_vertices_2d`
-walks the same curve twice -- once per cell -- and the resulting polygons
-overlap almost entirely along what should have been their shared,
-disjoint-interior boundary instead (this is exactly what surfaced the
-bug: a regression test that already existed for a *different* curved-edge
-overlap issue caught this one too).
+After vertices are welded above, two live edges created during this
+insertion can end up connecting the same pair of (now-canonical)
+endpoints without being the same stored node -- same root cause as
+duplicate vertices, one dimension up (two adjacent cells' independent
+clips against the same new winner each creating their own copy of what's
+geometrically one shared cut boundary). Left alone, `polygon_vertices_2d`
+walks the same curve twice and the resulting polygons overlap.
 
-Two edges are only welded if they connect the same endpoint pair *and* are
-the same curve (both straight, or both curved with matching quadric
-coefficients) -- sharing endpoints alone isn't sufficient, since a
-straight edge and a curved one (or two genuinely different curves) can
-share both endpoints without being the same boundary.
+Two edges are only welded if they share endpoints *and* are the same
+curve (both straight, or matching quadric coefficients) -- shared
+endpoints alone isn't enough, since a straight and a curved edge (or two
+different curves) can share both endpoints without being the same
+boundary.
 """
 function weld_duplicate_edges!(cx::CellComplex{N}, first_new_id::Int) where {N}
     edges = [id for id in first_new_id:length(cx.nodes) if !haskey(cx.superseded_by, id) && cx.nodes[id].dim == 1]
@@ -175,19 +134,53 @@ function weld_duplicate_edges!(cx::CellComplex{N}, first_new_id::Int) where {N}
             end
         end
     end
+    remove_degenerate_faces!(cx, first_new_id)
     return nothing
 end
 
 """
-Every live `(N-1)`-dimensional boundary's label should be the union of the
-(currently live) top cells it separates -- the sub/super-cell duality this
-whole complex is built on (a boundary's label is a *superset* of what it
-bounds, see `Label`'s docstring). Re-derives that directly from the
-current live parents rather than trusting whatever label a boundary
-happened to be given at its own moment of creation, which can be stale or
-incomplete right after a freshly welded vertex changes what a boundary
-actually separates (see `weld_near_duplicate_vertices!`). Scoped to this
-insertion's own new nodes for the same efficiency reason as the weld pass.
+Removes a face left with no valid closed boundary by the welding above
+(e.g. a zero-area sliver whose own third corner turns out to be one of
+the other two once welded) -- `supersede!` with no replacement; its real
+neighboring faces close up fine without it. A multiply-connected face
+(legitimate annular case) is left alone; only the unrecoverable zero-loop
+case is degenerate.
+
+At `N=3`, `node.dim==2` is a genuine face (not a 1D boundary), so uses
+`face_boundary_faces`, which can develop a real branch point
+`cyclic_boundary_walks` can't represent at all. A flat face's own route
+through `flat_face_frame_cached!` throws (rather than returning empty)
+when it can't find 3 non-collinear points -- exactly the degenerate case
+this function exists to catch, so caught here and treated the same as
+empty loops.
+"""
+function remove_degenerate_faces!(cx::CellComplex{N}, first_new_id::Int) where {N}
+    for id in first_new_id:length(cx.nodes)
+        haskey(cx.superseded_by, id) && continue
+        node = cx.nodes[id]
+        node.dim == 2 || continue
+        degenerate = if N == 3
+            try
+                isempty(face_boundary_faces(cx, id))
+            catch e
+                # Only a flat-plane-derivation failure means "degenerate"
+                # -- any other error is a real bug and must propagate.
+                e isa ErrorException && startswith(e.msg, "flat_face_frame") || rethrow()
+                true
+            end
+        else
+            isempty(cyclic_boundary_walks(cx, node.subcells))
+        end
+        degenerate && supersede!(cx, id, Int[])
+    end
+    return nothing
+end
+
+"""
+Every live `(N-1)`-dimensional boundary's label should be the union of
+the live top cells it separates -- re-derived directly from current live
+parents rather than trusted from creation time, which can go stale right
+after a weld changes what a boundary actually separates.
 """
 function fix_boundary_labels!(cx::CellComplex{N}, first_new_id::Int) where {N}
     for id in first_new_id:length(cx.nodes)
@@ -203,24 +196,16 @@ function fix_boundary_labels!(cx::CellComplex{N}, first_new_id::Int) where {N}
 end
 
 """
-Incorporate one new point (`new_idx`, coordinate `points[new_idx]`) into a
-complex that already correctly reflects every *other* point in `points`:
-for each currently-live cell (one per existing winner -- each winner has
-exactly one, since a point's territory stays a single connected convex
-region throughout G1's flat-bisector-only construction), check whether the
-new point beats the existing winner anywhere in it, and if so clip that
-cell by their bisector.
+Incorporate one new point (`new_idx`) into a complex already correct for
+every other point: for each currently-live cell (one per existing
+winner), check whether the new point beats the winner anywhere in it, and
+if so clip by their bisector.
 
-Cells for different existing winners are independent regions, but they can
-share boundary structure (an edge between two adjacent cells is the same
-stored node, referenced by both) -- clipping one cell's shared boundary
-therefore needs to correctly update its neighbor too, which is exactly
-what `clip_by_hyperplane!`'s `supersede!` calls handle. Processing winners
-in the order captured by `to_process` (snapshotted once at the start, so a
-clip performed for one winner doesn't change which *other* winners get
-visited) means that by the time a later winner's cell is examined, any
-shared boundary it has with an earlier-processed winner is already
-patched to reflect the new split.
+Cells can share boundary structure (an edge between two adjacent cells is
+the same stored node) -- clipping one updates its neighbor too via
+`clip_by_hyperplane!`'s own `supersede!` calls. `to_process` is
+snapshotted once at the start, so a clip for one winner doesn't change
+which others get visited.
 """
 function insert_point!(cx::CellComplex{N}, points::Dict{VertexIdx,Pt{N,Float64}}, new_idx::VertexIdx) where {N}
     new_point = points[new_idx]
@@ -310,19 +295,12 @@ function points_complex(points::Vector{Pt{N,Float64}}) where {N}
 end
 
 """
-`points_complex`'s "compactified" counterpart (see the layer-at-infinity
-planning report): the starting domain is the input's own convex hull,
-offset outward by a fixed distance `D` (default: `mult` times the input's
-own bounding-box diagonal, generous enough that the boundary sits well
-outside any finite structure the construction itself produces), instead of
-`padded_bbox`'s arbitrary axis-aligned rectangle. Otherwise identical to
-`points_complex` -- same per-point incremental insertion, same labeling --
-because nothing about the construction algorithm needs to know its own
-domain is a hull offset rather than a box; see the report for why that's
-exactly the point. Needs at least 3 affinely independent points (the
-generic case this targets) for the hull itself to be well-defined; returns
-`(cx, hull, offset)` so a caller can label the boundary-at-infinity's own
-edges/vertices afterward without recomputing the hull.
+`points_complex`'s "compactified" counterpart: the starting domain is the
+input's own convex hull, offset outward by `D` (default: `mult` times the
+bounding-box diagonal), instead of `padded_bbox`'s axis-aligned rectangle
+-- otherwise identical, since nothing about construction needs to know
+its domain is a hull offset rather than a box. Needs at least 3 affinely
+independent points. Returns `(cx, hull, offset)`.
 """
 function compactified_points_complex(points::Vector{Pt{2,Float64}}; mult::Float64=20.0)
     length(points) >= 3 || error("compactified_points_complex: need at least 3 (affinely independent) points")

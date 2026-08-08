@@ -1,23 +1,13 @@
 """
 A face of an `N`-cube: `spec[i]` is `:lo`/`:hi` if coordinate `i` is pinned
-to that bound, or `:free` if coordinate `i` ranges freely over that face.
-The face's dimension is the number of `:free` entries. This is the
-standard combinatorial description of a hypercube's full face lattice
-(vertices, edges, ..., facets, the cube itself), used only to bootstrap
-the initial bounded region the incremental construction starts from.
+to that bound, or `:free` if it ranges freely over that face. Dimension is
+the count of `:free` entries.
 """
 const FaceSpec{N} = NTuple{N,Symbol}
 
 face_dim(spec::FaceSpec) = count(==(:free), spec)
 
-"""
-All `N`-cube face specs of dimension `dim`: choose which `dim` coordinates
-are free (`binomial(N,dim)` ways), and a `:lo`/`:hi` assignment for the
-rest (`2^(N-dim)` ways) -- `binomial(N,dim)*2^(N-dim)` total, the standard
-hypercube face-count formula. Implemented via direct bitmask enumeration
-(no extra dependency) rather than a combinatorics library, which is fine
-at the small `N` this project targets.
-"""
+"""All `N`-cube face specs of dimension `dim`, via direct bitmask enumeration."""
 function face_specs(::Val{N}, dim::Int) where {N}
     out = FaceSpec{N}[]
     for free_mask in 0:(2^N-1)
@@ -59,11 +49,10 @@ end
 
 """
 Build the full face lattice of the axis-aligned box `[lo,hi]` as a fresh
-`CellComplex{N}` (every 0-, 1-, ..., `N`-dimensional face stored, with
-correct subcell links), all initially unlabeled (`Label()`, empty --
-labels are assigned once real input points exist to compete for them; see
-`clip_by_hyperplane!`). Returns the complex and the id of its single
-top-dimensional (`dim=N`) cell.
+`CellComplex{N}` (every 0..N-dimensional face, correctly linked), all
+initially unlabeled -- labels are assigned once real input features exist
+to compete for them (`clip_by_hyperplane!`). Returns the complex and the
+id of its single top-dimensional cell.
 """
 function init_bbox_complex(::Val{N}, lo::Pt{N,Float64}, hi::Pt{N,Float64}) where {N}
     cx = CellComplex{N}()
@@ -85,17 +74,11 @@ function init_bbox_complex(::Val{N}, lo::Pt{N,Float64}, hi::Pt{N,Float64}) where
 end
 
 """
-Build the face lattice of an arbitrary convex polygon `verts` (2D, in
-cyclic order -- as `offset_polygon` returns) as a fresh `CellComplex{2}`:
-one dim=0 cell per vertex, one dim=1 cell per edge (consecutive vertex
-pair), and a single dim=2 top cell referencing every edge -- the
-"compactified complex" domain-builder, the arbitrary-convex-polygon
-analogue of `init_bbox_complex`'s axis-aligned-box lattice (trivial at
-`N=2`, since a convex polygon's own face lattice has only these 3 levels,
-unlike a general `N`-cube's). All cells start unlabeled, exactly like
-`init_bbox_complex`'s -- labels are assigned the same way, once real input
-features exist to compete for them. Returns the complex and the id of its
-single top-dimensional cell.
+Build the face lattice of an arbitrary convex polygon `verts` (2D, cyclic
+order, as `offset_polygon` returns) as a fresh `CellComplex{2}` -- one
+dim=0 cell per vertex, one dim=1 cell per edge, one dim=2 top cell
+referencing every edge, all unlabeled like `init_bbox_complex`. Returns
+the complex and the id of its top cell.
 """
 function init_hull_offset_complex(verts::Vector{Pt{2,Float64}})
     n = length(verts)
