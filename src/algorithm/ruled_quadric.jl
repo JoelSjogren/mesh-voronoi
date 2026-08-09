@@ -126,51 +126,105 @@ from `p1` to `p2` -- the multi-crossing counterpart of
 `ruled_trace_crossing` (up to 4 via Bezout), same tracing machinery but
 scanning the whole sampled arc for every bracket instead of just the
 first. Returns points in arc order, empty if no sign change is found.
+
+Scans from *both* endpoints toward each other (see `_scan_branch`) instead
+of only forward from `p1`, and unions whatever each direction resolves.
+`Q1 ∩ Q2` genuinely can have several disjoint branches (confirmed via the
+tie-locus gallery: 3 generic lines' pairwise-bisector intersections split
+into up to 4 disconnected space curves) -- when `p1`/`p2` sit on branches
+that don't connect via a single monotonic sweep in `F`, a one-directional
+scan runs off the near end's branch and finds no real intersection at all
+partway across (confirmed via a direct repro: both endpoints verify
+exactly on `Q1`, degree-4 apart in `F`, yet `Q1` has no real point on the
+ruling line roughly a third of the way between them). Scanning from the
+far endpoint too recovers crossings on its own reachable stretch even
+when the near-end scan can't get there.
 """
 function ruled_trace_all_crossings(Q1::Quadric{3,Float64}, quad3::Quadric{3,Float64}, frame, p1::Pt{3,Float64}, p2::Pt{3,Float64})
     F0, R0 = ruled_params(frame, p1)
     F1, R1 = ruled_params(frame, p2)
 
-    # `Q1 ∩ ruling-line(F)` is a quadratic (up to 2 real roots), so picking
-    # the point on the true arc at each `F` means picking whichever root
-    # continues from the *immediately preceding* resolved point, not a
-    # straight-line guess from the two far-apart endpoints -- the latter
-    # can pick the wrong branch wherever the true arc curves away from
-    # that line, jumping between the two sheets and registering spurious
-    # sign changes (confirmed: up to 32 observed, double the Bezout bound
-    # of 4) or hiding a true crossing by jumping past it.
+    fwd = _scan_branch(Q1, quad3, frame, F0, R0, F1)
+    # The forward scan already covers the whole range -- original,
+    # battle-tested behavior, unchanged.
+    fwd.reached_end && return _merge_close_points(fwd.points)
+
+    bwd = _scan_branch(Q1, quad3, frame, F1, R1, F0)
+    bwd.reached_end && return reverse(_merge_close_points(bwd.points))
+
+    # Neither direction made it across -- union whatever each resolved
+    # (in arc order from its own starting endpoint), rather than
+    # discarding a partial, still-useful answer. A genuine gap neither
+    # scan can reach (unreachable from *either* known-good endpoint) is
+    # logged, not silently guessed at.
+    if fwd.lost_at !== nothing && bwd.lost_at !== nothing
+        @warn "ruled_trace_all_crossings: lost the arc's own branch scanning from both ends (forward stalled at F=$(fwd.lost_at), backward at F=$(bwd.lost_at)) -- unioning whatever each direction resolved instead of erroring; a crossing strictly inside the unreached gap would be missed" p1 p2
+    end
+    combined = vcat(fwd.points, reverse(bwd.points))
+    return _merge_close_points(combined)
+end
+
+"""
+Scans `F` from `F_start` (known point `(F_start,R_start)` on `Q1∩Q2`)
+toward `F_stop` in up to 65 steps, using the continuity heuristic
+documented on `ruled_trace_all_crossings`: at each `F`, pick whichever of
+`Q1`'s (up to 2) real intersections with `Q2`'s ruling line at that `F` is
+closest to the previous step's resolved `R`, since a straight-line guess
+from the two far-apart endpoints can jump between sheets. Stops early
+(without erroring) the first time `Q1` has no real intersection with the
+ruling line at all -- that step's own `F` is `lost_at`; `reached_end` is
+true only if the scan's last successfully-resolved sample is `F_stop`
+itself. Returns crossing points against `quad3` found within whatever
+prefix of the range was actually resolved, in arc order from `F_start`.
+"""
+function _scan_branch(Q1::Quadric{3,Float64}, quad3::Quadric{3,Float64}, frame, F_start::Float64, R_start::Float64, F_stop::Float64)
     function branch_point(F::Float64, guess_R::Float64)
         origin, direction = ruling_line(frame, F)
         roots = line_quadric_roots(Q1, origin, direction)
-        isempty(roots) && error("ruled_trace_all_crossings: lost the arc's own branch at F=$F (no real intersection of Q1 with this ruling line)")
+        isempty(roots) && return nothing
         R = roots[argmin(abs.(roots .- guess_R))]
         return origin + R * direction, R
     end
 
     nsamples = 65
-    Fs = [F0 + k * (F1 - F0) / (nsamples - 1) for k in 0:nsamples-1]
-    branch_pts = Vector{Pt{3,Float64}}(undef, nsamples)
-    Rs = Vector{Float64}(undef, nsamples)
-    prev_R = R0
-    for (k, F) in enumerate(Fs)
-        pt, R = branch_point(F, prev_R)
-        branch_pts[k] = pt
-        Rs[k] = R
+    Fs = [F_start + k * (F_stop - F_start) / (nsamples - 1) for k in 0:nsamples-1]
+    branch_pts = Pt{3,Float64}[]
+    Rs = Float64[]
+    resolved_Fs = Float64[]
+    prev_R = R_start
+    lost_at = nothing
+    for F in Fs
+        res = branch_point(F, prev_R)
+        if res === nothing
+            lost_at = F
+            break
+        end
+        pt, R = res
+        push!(branch_pts, pt)
+        push!(Rs, R)
+        push!(resolved_Fs, F)
         prev_R = R
     end
-    gs = evaluate.(Ref(quad3), branch_pts)
 
+    n = length(branch_pts)
+    gs = evaluate.(Ref(quad3), branch_pts)
     points = Pt{3,Float64}[]
-    for k in 2:nsamples
+    for k in 2:n
         sign(gs[k]) == sign(gs[k-1]) && continue
-        lo, hi = Fs[k-1], Fs[k]
+        lo, hi = resolved_Fs[k-1], resolved_Fs[k]
         glo = gs[k-1]
         lo_R, hi_R = Rs[k-1], Rs[k]
         for _ in 1:60
             mid = (lo + hi) / 2
-            # Guess from the bracket's own two already-resolved R values
-            # (close together), not the far-apart arc endpoints.
-            mid_pt, mid_R = branch_point(mid, (lo_R + hi_R) / 2)
+            mid_res = branch_point(mid, (lo_R + hi_R) / 2)
+            # A bracket's own two endpoints already resolved on the true
+            # branch; losing it strictly inside a bisection step this
+            # fine (started >= 1/64 of the outer range, halved 60x) would
+            # mean the branch itself is discontinuous at sub-numerical-
+            # noise scale -- treat as converged at the nearer edge instead
+            # of erroring over it.
+            mid_res === nothing && break
+            mid_pt, mid_R = mid_res
             gmid = evaluate(quad3, mid_pt)
             if sign(gmid) == sign(glo)
                 lo, lo_R = mid, mid_R
@@ -178,15 +232,21 @@ function ruled_trace_all_crossings(Q1::Quadric{3,Float64}, quad3::Quadric{3,Floa
                 hi, hi_R = mid, mid_R
             end
         end
-        push!(points, branch_point((lo + hi) / 2, (lo_R + hi_R) / 2)[1])
+        final = branch_point((lo + hi) / 2, (lo_R + hi_R) / 2)
+        final === nothing || push!(points, final[1])
     end
 
-    # Adjacent sample brackets can each register a sign change around the
-    # same true crossing during a near-tangency stretch (confirmed: one
-    # repro hit 8 "crossings", double the Bezout bound). Merge consecutive
-    # points within numerical noise of each other; a genuine widely-
-    # separated near-tangency isn't resolved here and surfaces downstream
-    # as a large crossing count instead.
+    reached_end = n == nsamples
+    return (; points, reached_end, lost_at)
+end
+
+# Adjacent sample brackets can each register a sign change around the same
+# true crossing during a near-tangency stretch (confirmed: one repro hit 8
+# "crossings", double the Bezout bound). Merge consecutive points within
+# numerical noise of each other; a genuine widely-separated near-tangency
+# isn't resolved here and surfaces downstream as a large crossing count
+# instead.
+function _merge_close_points(points::Vector{Pt{3,Float64}})
     isempty(points) && return points
     merged = [points[1]]
     for p in points[2:end]

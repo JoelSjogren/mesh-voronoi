@@ -60,19 +60,41 @@
   .section-title { font-size: 1.6rem; margin: 0 0 1.6rem; }
   .k-row { margin-bottom: 2.2rem; }
   .k-row:last-child { margin-bottom: 0; }
-  .k-label { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 0.8rem; }
+  .k-label { display: flex; align-items: baseline; gap: 0.8rem; margin-bottom: 0.8rem; flex-wrap: wrap; }
   .k-num { font-family: ui-monospace, monospace; font-size: 0.95rem; font-weight: 700; color: var(--accent); }
   .k-sub { font-size: 0.85rem; color: var(--ink-mute); }
   .tie-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0.9rem; }
+  @media (max-width: 560px) {
+    .tie-grid { grid-template-columns: 1fr; }
+  }
   .tie-card {
     margin: 0; background: var(--paper-raised); border: 1px solid var(--rule); border-radius: 6px;
-    overflow: hidden; box-shadow: var(--shadow);
+    box-shadow: var(--shadow); position: relative;
   }
-  .tie-card img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; }
+  .tie-card:has(.info-btn:hover), .tie-card:has(.info-btn:focus) { z-index: 5; }
+  .tie-card img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: contain; background: #fff; border-radius: 6px 6px 0 0; }
+  .tie-card canvas { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; background: #fff; touch-action: none; cursor: grab; border-radius: 6px 6px 0 0; }
+  .tie-card canvas:active { cursor: grabbing; }
   .tie-card figcaption {
     padding: 0.4rem 0.6rem; font-size: 0.74rem; color: var(--ink-mute); text-align: center;
-    border-top: 1px solid var(--rule-soft); background: var(--paper);
+    border-top: 1px solid var(--rule-soft); background: var(--paper); border-radius: 0 0 6px 6px;
   }
+  .tie-card figcaption .shape { display: block; font-style: italic; color: var(--accent); margin-top: 0.1rem; position: relative; }
+  .info-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.05em; height: 1.05em; margin-left: 0.35em; vertical-align: -0.15em;
+    border-radius: 50%; border: 1px solid var(--accent); background: none; color: var(--accent);
+    font-style: normal; font-family: Georgia, serif; font-size: 0.72em; line-height: 1; cursor: pointer; padding: 0;
+  }
+  .info-btn:hover, .info-btn:focus { background: var(--accent); color: var(--paper-raised); outline: none; }
+  .info-pop {
+    display: none; position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%);
+    margin-bottom: 0.5rem; width: max-content; max-width: 240px;
+    text-align: left; font-style: normal; padding: 0.5rem 0.6rem;
+    background: var(--accent-wash); border: 1px solid var(--rule); border-radius: 5px; box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+    font-size: 0.92em; line-height: 1.4; color: var(--ink-soft); z-index: 10;
+  }
+  .info-btn:hover + .info-pop, .info-btn:focus + .info-pop { display: block; }
   footer { padding: 2rem 0 3rem; }
   footer p { color: var(--ink-mute); font-size: 0.82rem; max-width: 62ch; }
   a { color: var(--accent); }
@@ -89,10 +111,12 @@
       <code>AffineQuadratic</code> + <code>bisector</code>, not a mockup), placed so the marked
       point sits exactly on the locus. A tie among <code>k</code> features generically has
       codimension <code>k&minus;1</code>, so <code>k</code> runs from 1 (no tie yet) to
-      <code>n+1</code> (an isolated point &mdash; the generic vertex of the diagram). &laquo;plane&raquo;
-      only exists as a feature type at n=3, and isn't yet an insertable input to the incremental
-      construction &mdash; every case here is built directly from the same low-level quadric
-      machinery the construction itself uses, one level below it.
+      <code>n+1</code> (isolated point(s) &mdash; the generic vertex of the diagram). Every shape
+      name and point/degree count below is read directly off the bisector's own matrix (rank,
+      signature, reducibility), not asserted. &laquo;plane&raquo; only exists as a feature type at
+      n=3, and isn't yet an insertable input to the incremental construction &mdash; every case
+      here is built directly from the same low-level quadric machinery the construction itself
+      uses, one level below it. n=3 scenes are interactive &mdash; drag to rotate.
     </p>
   </div>
 </header>
@@ -117,35 +141,35 @@
         <div class="tie-grid">
         <figure class="tie-card">
           <img src="/images/gallery_n2_k2_PP.png" alt="point + point" loading="lazy">
-          <figcaption>point + point</figcaption>
+          <figcaption>point + point<span class="shape">line<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">The perpendicular bisector of the two points.</span></span></figcaption>
         </figure>
         <figure class="tie-card">
           <img src="/images/gallery_n2_k2_PL.png" alt="point + line" loading="lazy">
-          <figcaption>point + line</figcaption>
+          <figcaption>point + line<span class="shape">parabola<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">Axis: the perpendicular to the line, through the point (point = focus, line = directrix).</span></span></figcaption>
         </figure>
         <figure class="tie-card">
           <img src="/images/gallery_n2_k2_LL.png" alt="line + line" loading="lazy">
-          <figcaption>line + line</figcaption>
+          <figcaption>line + line<span class="shape">pair of lines<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">The two angle bisectors of the input lines.</span></span></figcaption>
         </figure>
         </div>
       </div>      <div class="k-row">
-        <div class="k-label"><span class="k-num">k = 3</span><span class="k-sub">codim 2 &rarr; an isolated point (the generic vertex)</span></div>
+        <div class="k-label"><span class="k-num">k = 3</span><span class="k-sub">codim 2 &rarr; isolated point(s) (the generic vertex)</span></div>
         <div class="tie-grid">
         <figure class="tie-card">
           <img src="/images/gallery_n2_k3_PPP.png" alt="point + point + point" loading="lazy">
-          <figcaption>point + point + point</figcaption>
+          <figcaption>point + point + point<span class="shape">1 point</span></figcaption>
         </figure>
         <figure class="tie-card">
           <img src="/images/gallery_n2_k3_PPL.png" alt="point + point + line" loading="lazy">
-          <figcaption>point + point + line</figcaption>
+          <figcaption>point + point + line<span class="shape">2 points</span></figcaption>
         </figure>
         <figure class="tie-card">
           <img src="/images/gallery_n2_k3_PLL.png" alt="point + line + line" loading="lazy">
-          <figcaption>point + line + line</figcaption>
+          <figcaption>point + line + line<span class="shape">2 points found (Bezout bound 4 not confirmed reachable)</span></figcaption>
         </figure>
         <figure class="tie-card">
           <img src="/images/gallery_n2_k3_LLL.png" alt="line + line + line" loading="lazy">
-          <figcaption>line + line + line</figcaption>
+          <figcaption>line + line + line<span class="shape">4 points</span></figcaption>
         </figure>
         </div>
       </div>
@@ -158,153 +182,153 @@
       <div class="k-row">
         <div class="k-label"><span class="k-num">k = 1</span><span class="k-sub">the feature itself &mdash; no tie yet</span></div>
         <div class="tie-grid">
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k1_P.png" alt="point" loading="lazy">
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-bare="0.0" width="300" height="300"></canvas>
           <figcaption>point</figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k1_L.png" alt="line" loading="lazy">
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-bare="1.0" width="300" height="300"></canvas>
           <figcaption>line</figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k1_Pl.png" alt="plane" loading="lazy">
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-bare="2.0" width="300" height="300"></canvas>
           <figcaption>plane</figcaption>
         </figure>
         </div>
       </div>      <div class="k-row">
         <div class="k-label"><span class="k-num">k = 2</span><span class="k-sub">codim 1 &rarr; dimension 2</span></div>
         <div class="tie-grid">
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k2_PP.png" alt="point + point" loading="lazy">
-          <figcaption>point + point</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k2_PP.json" width="300" height="300"></canvas>
+          <figcaption>point + point<span class="shape">plane<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">The perpendicular bisector plane of the two points.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k2_PL.png" alt="point + line" loading="lazy">
-          <figcaption>point + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k2_PL.json" width="300" height="300"></canvas>
+          <figcaption>point + line<span class="shape">parabolic cylinder<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">The 2D point+line parabola (axis perpendicular to the line, through the point), extruded along the direction perpendicular to the plane containing the point and the line.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k2_PPl.png" alt="point + plane" loading="lazy">
-          <figcaption>point + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k2_PPl.json" width="300" height="300"></canvas>
+          <figcaption>point + plane<span class="shape">elliptic paraboloid<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">A paraboloid of revolution (verified: two of its three principal curvatures are exactly equal) &mdash; axis perpendicular to the plane, through the point. Same construction as a satellite dish: point = focus, plane = directrix plane.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k2_LL.png" alt="line + line" loading="lazy">
-          <figcaption>line + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k2_LL.json" width="300" height="300"></canvas>
+          <figcaption>line + line<span class="shape">hyperbolic paraboloid<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">A doubly-ruled surface: every point on it has two straight lines through it that lie entirely in the surface (see the poster / ruled_quadric.jl for how the construction exploits this).</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k2_LPl.png" alt="line + plane" loading="lazy">
-          <figcaption>line + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k2_LPl.json" width="300" height="300"></canvas>
+          <figcaption>line + plane<span class="shape">cone<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">Axis direction = normalize(line direction + plane normal), verified exactly (dot product 1.0 against the bisector's own principal axis).</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k2_PlPl.png" alt="plane + plane" loading="lazy">
-          <figcaption>plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k2_PlPl.json" width="300" height="300"></canvas>
+          <figcaption>plane + plane<span class="shape">pair of planes<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">The two dihedral-angle bisector planes: their normals are normalize(n<sub>1</sub>&minus;n<sub>2</sub>) and normalize(n<sub>1</sub>+n<sub>2</sub>), where n<sub>1</sub>, n<sub>2</sub> are the input planes' own normals &mdash; confirmed by expanding the bisector equation directly, it factors exactly into these two linear equations.</span></span></figcaption>
         </figure>
         </div>
       </div>      <div class="k-row">
         <div class="k-label"><span class="k-num">k = 3</span><span class="k-sub">codim 2 &rarr; dimension 1</span></div>
         <div class="tie-grid">
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PPP.png" alt="point + point + point" loading="lazy">
-          <figcaption>point + point + point</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PPP.json" width="300" height="300"></canvas>
+          <figcaption>point + point + point<span class="shape">a line<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">Perpendicular to the plane through the 3 points, through their circumcenter &mdash; verified exactly (dot product 1.0 against that plane's normal).</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PPL.png" alt="point + point + line" loading="lazy">
-          <figcaption>point + point + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PPL.json" width="300" height="300"></canvas>
+          <figcaption>point + point + line<span class="shape">a parabola<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">Genuinely a parabola, not an ellipse or hyperbola (checked: one eigenvalue of the in-plane conic is exactly zero, ~10<sup>&minus;20</sup> vs. the other's ~10<sup>&minus;3</sup>). It lies in the perpendicular bisector plane of the two points; within that plane, the axis is exactly perpendicular to the line's own direction projected onto that plane (dot product 0.0, exact).</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PPPl.png" alt="point + point + plane" loading="lazy">
-          <figcaption>point + point + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PPPl.json" width="300" height="300"></canvas>
+          <figcaption>point + point + plane<span class="shape">an ellipse<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">Genuinely an ellipse (checked with a trace extended to 200&times; the construction scale without it escaping, plus an in-plane eigenvalue check &mdash; both nonzero and same-signed, not the near-zero pattern a parabola shows).</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PLL.png" alt="point + line + line" loading="lazy">
-          <figcaption>point + line + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PLL.json" width="300" height="300"></canvas>
+          <figcaption>point + line + line<span class="shape">an unbounded, non-planar space curve<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">A genuine non-planar space curve, not reducible to anything simpler that was checked: it doesn't lie on any sphere (best-fit residual is huge relative to its size), and it isn't symmetric under a 180&deg; rotation about the two lines' common perpendicular. If you know a cleaner synthetic description, we'd like to hear it.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PLPl.png" alt="point + line + plane" loading="lazy">
-          <figcaption>point + line + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PLPl.json" width="300" height="300"></canvas>
+          <figcaption>point + line + plane<span class="shape">a closed, non-planar space curve<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">A closed, non-planar space curve of degree &le;4. Viewed exactly along the point+line parabolic cylinder's own extrusion axis (perpendicular to the plane containing the point and the line), the whole loop collapses onto a single arc of that parabola &mdash; confirmed exactly (eigenvalue ~10<sup>&minus;16</sup>) &mdash; which is why rotating to that angle makes it look self-overlapping: a closed loop can't map injectively onto a 1D arc, so it traces out and back over the same parabola.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PPlPl.png" alt="point + plane + plane" loading="lazy">
-          <figcaption>point + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PPlPl.json" width="300" height="300"></canvas>
+          <figcaption>point + plane + plane<span class="shape">an ellipse<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">Genuinely an ellipse: confirmed planar and bounded even with the trace extended to 200&times; the construction scale, with both in-plane eigenvalues nonzero and same-signed.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_LLL.png" alt="line + line + line" loading="lazy">
-          <figcaption>line + line + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_LLL.json" width="300" height="300"></canvas>
+          <figcaption>line + line + line<span class="shape">4 disconnected unbounded space curves<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">4 separate unbounded space curves in this example (found via exhaustive branch search, not just the one through the marked origin point) &mdash; each individually non-planar, none of them straight lines.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_LLPl.png" alt="line + line + plane" loading="lazy">
-          <figcaption>line + line + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_LLPl.json" width="300" height="300"></canvas>
+          <figcaption>line + line + plane<span class="shape">2 disconnected unbounded space curves<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">2 separate unbounded space curves in this example (found via exhaustive branch search), each non-planar.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_LPlPl.png" alt="line + plane + plane" loading="lazy">
-          <figcaption>line + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_LPlPl.json" width="300" height="300"></canvas>
+          <figcaption>line + plane + plane<span class="shape">an ellipse union a hyperbola, in different planes<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">An ellipse in one plane and a hyperbola in a different plane &mdash; confirmed by tracing each branch separately and fitting an in-plane conic to each.</span></span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k3_PlPlPl.png" alt="plane + plane + plane" loading="lazy">
-          <figcaption>plane + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k3_PlPlPl.json" width="300" height="300"></canvas>
+          <figcaption>plane + plane + plane<span class="shape">up to 4 lines through a common point<button class="info-btn" type="button" aria-label="more detail">i</button><span class="info-pop">The 3 planes meet at one common point (confirmed: their normals are linearly independent). Every line through that point is scale-invariant for the tie condition, so the equidistant set reduces to a 2D problem on directions &mdash; the exact 3D analogue of "3 lines &rarr; 4 points (incenter + 3 excenters)", now giving lines through a point instead of points in a plane.</span></span></figcaption>
         </figure>
         </div>
       </div>      <div class="k-row">
-        <div class="k-label"><span class="k-num">k = 4</span><span class="k-sub">codim 3 &rarr; an isolated point (the generic vertex)</span></div>
+        <div class="k-label"><span class="k-num">k = 4</span><span class="k-sub">codim 3 &rarr; isolated point(s) (the generic vertex)</span></div>
         <div class="tie-grid">
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPPP.png" alt="point + point + point + point" loading="lazy">
-          <figcaption>point + point + point + point</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPPP.json" width="300" height="300"></canvas>
+          <figcaption>point + point + point + point<span class="shape">1 point</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPPL.png" alt="point + point + point + line" loading="lazy">
-          <figcaption>point + point + point + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPPL.json" width="300" height="300"></canvas>
+          <figcaption>point + point + point + line<span class="shape">2 points</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPPPl.png" alt="point + point + point + plane" loading="lazy">
-          <figcaption>point + point + point + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPPPl.json" width="300" height="300"></canvas>
+          <figcaption>point + point + point + plane<span class="shape">2 points</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPLL.png" alt="point + point + line + line" loading="lazy">
-          <figcaption>point + point + line + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPLL.json" width="300" height="300"></canvas>
+          <figcaption>point + point + line + line<span class="shape">4 points</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPLPl.png" alt="point + point + line + plane" loading="lazy">
-          <figcaption>point + point + line + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPLPl.json" width="300" height="300"></canvas>
+          <figcaption>point + point + line + plane<span class="shape">2 points found (Bezout bound 4 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPPlPl.png" alt="point + point + plane + plane" loading="lazy">
-          <figcaption>point + point + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPPlPl.json" width="300" height="300"></canvas>
+          <figcaption>point + point + plane + plane<span class="shape">2 points found (Bezout bound 4 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PLLL.png" alt="point + line + line + line" loading="lazy">
-          <figcaption>point + line + line + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PLLL.json" width="300" height="300"></canvas>
+          <figcaption>point + line + line + line<span class="shape">4 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PLLPl.png" alt="point + line + line + plane" loading="lazy">
-          <figcaption>point + line + line + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PLLPl.json" width="300" height="300"></canvas>
+          <figcaption>point + line + line + plane<span class="shape">4 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PLPlPl.png" alt="point + line + plane + plane" loading="lazy">
-          <figcaption>point + line + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PLPlPl.json" width="300" height="300"></canvas>
+          <figcaption>point + line + plane + plane<span class="shape">4 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PPlPlPl.png" alt="point + plane + plane + plane" loading="lazy">
-          <figcaption>point + plane + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PPlPlPl.json" width="300" height="300"></canvas>
+          <figcaption>point + plane + plane + plane<span class="shape">2 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_LLLL.png" alt="line + line + line + line" loading="lazy">
-          <figcaption>line + line + line + line</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_LLLL.json" width="300" height="300"></canvas>
+          <figcaption>line + line + line + line<span class="shape">6 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_LLLPl.png" alt="line + line + line + plane" loading="lazy">
-          <figcaption>line + line + line + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_LLLPl.json" width="300" height="300"></canvas>
+          <figcaption>line + line + line + plane<span class="shape">6 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_LLPlPl.png" alt="line + line + plane + plane" loading="lazy">
-          <figcaption>line + line + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_LLPlPl.json" width="300" height="300"></canvas>
+          <figcaption>line + line + plane + plane<span class="shape">4 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_LPlPlPl.png" alt="line + plane + plane + plane" loading="lazy">
-          <figcaption>line + plane + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_LPlPlPl.json" width="300" height="300"></canvas>
+          <figcaption>line + plane + plane + plane<span class="shape">6 points found (Bezout bound 8 not confirmed reachable)</span></figcaption>
         </figure>
-        <figure class="tie-card">
-          <img src="/images/gallery_n3_k4_PlPlPlPl.png" alt="plane + plane + plane + plane" loading="lazy">
-          <figcaption>plane + plane + plane + plane</figcaption>
+        <figure class="tie-card scene-card">
+          <canvas class="scene3d" data-src="/gallery-data/gallery_n3_k4_PlPlPlPl.json" width="300" height="300"></canvas>
+          <figcaption>plane + plane + plane + plane<span class="shape">8 points</span></figcaption>
         </figure>
         </div>
       </div>
@@ -314,8 +338,200 @@
   <div class="wrap">
     <p>Locus curves/surfaces of dimension &gt; 0 are point clouds from randomized Gauss&ndash;Newton
     projection onto the shared bisector system, not a mesh &mdash; density, not exactness, conveys
-    the shape. The exact predicate kernel elsewhere in this project is a separate, exact code path.</p>
+    the shape. Isolated-point cases (the last row of each section) show every real root a
+    many-start Newton search actually finds for that construction, marked with a star, not just
+    one canonical example &mdash; e.g. three mutual line-tangent points at n=2 shows all 4 real
+    solutions (the incenter and 3 excenters of the triangle the lines form). Where the search
+    finds fewer real roots than the Bezout upper bound on the caption, that's stated explicitly
+    rather than assumed away: the bound isn't always reachable by real (as opposed to complex)
+    solutions, and where it's unclear whether that's a fundamental limit or just a search gap,
+    that uncertainty is the honest answer. The exact predicate kernel elsewhere in this project is
+    a separate, exact code path; this gallery uses ordinary floats.</p>
   </div>
 </footer>
+<script>
+(function() {
+  const FEAT_COLORS = ["rgba(177,121,30,1)", "rgba(37,121,88,1)", "rgba(111,81,153,1)", "rgba(177,121,30,0.85)"];
+  const LOCUS_COLOR = "rgba(53,79,186,0.5)";
+  const ORIGIN_COLOR = "rgba(161,58,79,1)";
+
+  function bareScene(typeCode) {
+    const R0 = 2.0;
+    const anchor = [R0, 0, 0];
+    const feat = { type: typeCode, anchor, color: FEAT_COLORS[0] };
+    if (typeCode == 1) feat.dir = [0, 1, 0];
+    if (typeCode == 2) { feat.u = [0, 1, 0]; feat.v = [0, 0, 1]; }
+    return { features: [feat], locus: [], isolated: false };
+  }
+
+  function star5Path(ctx, cx, cy, rOuter) {
+    const rInner = rOuter * 0.5;
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = (i % 2 === 0) ? rOuter : rInner;
+      const a = -Math.PI / 2 + i * Math.PI / 5;
+      const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+  }
+
+  class Scene3D {
+    constructor(canvas, data, cssSize) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.data = data;
+      this.yaw = 0.7; this.pitch = 0.35;
+      this.dragging = false; this.lastX = 0; this.lastY = 0;
+      this.W = cssSize; this.H = cssSize;
+      this.viewR = this.computeViewRadius();
+      canvas.addEventListener('pointerdown', (e) => {
+        this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!this.dragging) return;
+        const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
+        this.yaw += dx * 0.012; this.pitch += dy * 0.012;
+        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
+        this.lastX = e.clientX; this.lastY = e.clientY;
+        this.render();
+      });
+      canvas.addEventListener('pointerup', () => { this.dragging = false; });
+      canvas.addEventListener('pointerleave', () => { this.dragging = false; });
+      this.render();
+    }
+    computeViewRadius() {
+      // fits the camera to the actual data extent instead of a fixed window
+      // -- isolated-point clouds can land well outside the R0=2 construction
+      // scale (confirmed: some k=4 roots sit past 10x R0), and a fixed
+      // window silently clipped them off-canvas.
+      let maxR = 3.0;
+      const norm = (p) => Math.hypot(p[0], p[1], p[2]);
+      for (const p of (this.data.locus || [])) maxR = Math.max(maxR, norm(p));
+      for (const f of this.data.features) {
+        maxR = Math.max(maxR, norm(f.anchor));
+        if (f.type == 1) {
+          const ext = 4.8;
+          maxR = Math.max(maxR, norm(f.anchor.map((v, i) => v + ext * f.dir[i])));
+        } else if (f.type == 2) {
+          const s = 4.0;
+          maxR = Math.max(maxR, norm(f.anchor.map((v, i) => v + s * f.u[i] + s * f.v[i])));
+        }
+      }
+      return maxR;
+    }
+    project(p) {
+      let [x, y, z] = p;
+      const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+      let x1 = x * cy + z * sy;
+      let z1 = -x * sy + z * cy;
+      const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+      let y2 = y * cp - z1 * sp;
+      let z2 = y * sp + z1 * cp;
+      return [x1, y2, z2];
+    }
+    render() {
+      const ctx = this.ctx, W = this.W, H = this.H;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+      const scale = Math.min(W, H) / (2.2 * this.viewR);
+      const toScreen = (x, y) => [W / 2 + x * scale, H / 2 - y * scale];
+      const prims = [];
+      for (const f of this.data.features) {
+        if (f.type == 0) {
+          const pr = this.project(f.anchor);
+          prims.push({ depth: pr[2], draw: () => {
+            const [sx, sy] = toScreen(pr[0], pr[1]);
+            ctx.beginPath(); ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
+            ctx.fillStyle = f.color; ctx.fill();
+            ctx.lineWidth = 1.4; ctx.strokeStyle = '#fff'; ctx.stroke();
+          }});
+        } else if (f.type == 1) {
+          const ext = 4.8;
+          const p1 = [f.anchor[0] - ext * f.dir[0], f.anchor[1] - ext * f.dir[1], f.anchor[2] - ext * f.dir[2]];
+          const p2 = [f.anchor[0] + ext * f.dir[0], f.anchor[1] + ext * f.dir[1], f.anchor[2] + ext * f.dir[2]];
+          const a = this.project(p1), b = this.project(p2);
+          prims.push({ depth: (a[2] + b[2]) / 2, draw: () => {
+            const [ax, ay] = toScreen(a[0], a[1]), [bx, by] = toScreen(b[0], b[1]);
+            ctx.strokeStyle = f.color; ctx.lineWidth = 3.2;
+            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          }});
+        } else if (f.type == 2) {
+          const s = 4.0;
+          const corners = [
+            [f.anchor[0] - s*f.u[0] - s*f.v[0], f.anchor[1] - s*f.u[1] - s*f.v[1], f.anchor[2] - s*f.u[2] - s*f.v[2]],
+            [f.anchor[0] + s*f.u[0] - s*f.v[0], f.anchor[1] + s*f.u[1] - s*f.v[1], f.anchor[2] + s*f.u[2] - s*f.v[2]],
+            [f.anchor[0] + s*f.u[0] + s*f.v[0], f.anchor[1] + s*f.u[1] + s*f.v[1], f.anchor[2] + s*f.u[2] + s*f.v[2]],
+            [f.anchor[0] - s*f.u[0] + s*f.v[0], f.anchor[1] - s*f.u[1] + s*f.v[1], f.anchor[2] - s*f.u[2] + s*f.v[2]],
+          ];
+          const proj = corners.map((c) => this.project(c));
+          const depth = proj.reduce((a, p) => a + p[2], 0) / 4;
+          const fillCol = f.color.replace(/,1(\.0)?\)/, ",0.32)").replace(/,0\.85\)/, ",0.32)");
+          prims.push({ depth, draw: () => {
+            ctx.beginPath();
+            proj.forEach((p, i) => { const [sx, sy] = toScreen(p[0], p[1]); i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy); });
+            ctx.closePath();
+            ctx.fillStyle = fillCol; ctx.fill();
+            ctx.lineWidth = 1; ctx.strokeStyle = f.color; ctx.stroke();
+          }});
+        }
+      }
+      const isolated = this.data.isolated;
+      for (const p of this.data.locus) {
+        const pr = this.project(p);
+        prims.push({ depth: pr[2], draw: () => {
+          const [sx, sy] = toScreen(pr[0], pr[1]);
+          ctx.beginPath();
+          if (isolated) {
+            star5Path(ctx, sx, sy, 8);
+            ctx.fillStyle = ORIGIN_COLOR; ctx.fill();
+            ctx.lineWidth = 1.2; ctx.strokeStyle = '#fff'; ctx.stroke();
+          } else {
+            ctx.arc(sx, sy, 1.7, 0, 2 * Math.PI);
+            ctx.fillStyle = LOCUS_COLOR; ctx.fill();
+          }
+        }});
+      }
+      prims.sort((a, b) => a.depth - b.depth);
+      for (const pr of prims) pr.draw();
+    }
+  }
+
+  function setupCanvas(canvas) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssSize = canvas.getBoundingClientRect().width || canvas.width;
+    canvas.width = cssSize * dpr; canvas.height = cssSize * dpr;
+    canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    return cssSize;
+  }
+
+  function init() {
+    document.querySelectorAll('canvas.scene3d').forEach((canvas) => {
+      const cssSize = setupCanvas(canvas);
+      const bare = canvas.getAttribute('data-bare');
+      if (bare !== null) {
+        canvas._scene = new Scene3D(canvas, bareScene(parseInt(bare)), cssSize);
+        return;
+      }
+      const src = canvas.getAttribute('data-src');
+      fetch(src).then(r => r.json()).then(data => {
+        canvas._scene = new Scene3D(canvas, data, cssSize);
+      }).catch(err => {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#faa'; ctx.fillRect(0,0,canvas.width,canvas.height);
+      });
+    });
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('canvas.scene3d').forEach((canvas) => {
+        if (!canvas._scene) return;
+        const cssSize = setupCanvas(canvas);
+        canvas._scene.W = cssSize; canvas._scene.H = cssSize; canvas._scene.render();
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
 </body>
 </html>

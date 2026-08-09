@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh-voronoi-nd &mdash; an edge with no flat neighboring face</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --card-bg: #1d2027;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2c3038;
+      --accent: #6ea1ff;
+      --bad: #ff6b61;
+      --good: #3fcf82;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  header {
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--card-bg);
+  }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; }
+  main { max-width: 980px; margin: 0 auto; padding: 1.5rem 2rem 4rem; }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.3rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .badge.good { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+  .step { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+  .step img {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+  }
+  .step canvas.scene3d {
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 640 / 560;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fff;
+    touch-action: none;
+    cursor: grab;
+  }
+  .step canvas.scene3d:active { cursor: grabbing; }
+  .step .desc { flex: 1; min-width: 260px; }
+  .step .desc h3 { margin-top: 0; font-size: 1rem; }
+  ul { padding-left: 1.3rem; }
+  li { margin-bottom: 0.4rem; }
+  pre {
+    background: color-mix(in srgb, var(--bad) 8%, var(--card-bg));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0; }
+  th, td { text-align: left; padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .legend { display: flex; gap: 1.2rem; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); margin-top: 0.6rem; }
+  .swatch { display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 50%; margin-right: 0.35rem; vertical-align: -1px; }
+  .swatch.line { border-radius: 2px; width: 1.1rem; height: 0.3rem; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>mesh-voronoi-nd &mdash; an edge with no flat neighboring face</h1>
+  <div class="sub">One-off investigation report, generated from a live run of the actual construction code (not a mockup) &mdash; see the live dashboard for ongoing test status. This page replaces an earlier report on this same repro (a genuine tie point breaking label consistency), which is now confirmed fixed.</div>
+  <!--DATE-->
+</header>
+<main>
+
+  <div class="card">
+    <h2>Summary</h2>
+    <p>
+      This is the most representative remaining failure in the 150-trial three-segment stress
+      suite: <code>find_flat_neighbor_face: edge 874 has no live flat neighboring face</code>,
+      the largest single coherent failure category left (23/150) after the
+      <code>ruled_trace_all_crossings</code> branch-loss fix. Not cherry-picked &mdash; the first
+      hit scanning random seeds in order.
+    </p>
+    <p>
+      <span class="badge bad">open</span> Root-caused below: an edge sitting where four
+      independently-clipped pieces of the exact same curved bisector surface meet, with no flat
+      face surviving anywhere nearby &mdash; exactly the scenario <code>find_flat_neighbor_face</code>'s
+      own docstring already predicted as unhandled ("two different segments' own caps meeting"),
+      now confirmed concretely rather than just anticipated.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Setup</h2>
+    <p>
+      Three random segments, found by scanning random seeds in stress-test order and keeping the
+      first one that hits this specific failure. Built through the library's own
+      <code>multi_complex</code>, the same path every test uses.
+    </p>
+    <div class="legend">
+      <span><span class="swatch" style="background:#d1453b"></span>segment 1</span>
+      <span><span class="swatch" style="background:#2e8b57"></span>segment 2</span>
+      <span><span class="swatch" style="background:#4169e1"></span>segment 3</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 1 &mdash; the input</h2>
+    <div class="step">
+      <canvas class="scene3d" data-src="/gallery-data/curvedcap_step1.json" width="640" height="560"></canvas>
+      <div class="desc">
+        <p>
+          Three ordinary segments &mdash; drag to rotate. Construction gets substantially into
+          inserting the third one, then fails while trying to locate a curved edge's own flat
+          context.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 2 &mdash; the failing edge</h2>
+    <div class="step">
+      <canvas class="scene3d" data-src="/gallery-data/curvedcap_step2.json" width="640" height="560"></canvas>
+      <div class="desc">
+        <p>
+          The orange arc is edge 874 &mdash; not a straight line, a genuine curve confined to a
+          quadric, traced between its own two endpoints (orange dots) exactly as the construction
+          itself carries it. <code>find_flat_neighbor_face</code> needs a live, flat, <code>dim=2</code>
+          face touching this edge to locate it in local 2D coordinates. It scans every face that
+          references edge 874 and finds none.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Step 3 &mdash; the surface this edge actually sits on</h2>
+    <div class="step">
+      <canvas class="scene3d" data-src="/gallery-data/curvedcap_step3.json" width="640" height="560"></canvas>
+      <div class="desc">
+        <p>
+          The faint blue wireframe is <code>bisector(segment 1, segment 2)</code>'s own surface,
+          sampled the same way the construction itself parametrizes it (<code>ruled_frame</code> /
+          <code>ruling_line</code>) &mdash; not a mockup surface, the real one. Four live faces
+          touch edge 874: <span class="mono">875, 876, 878, 879</span>. All four carry
+          <span class="mono">curve = bisector(segment 1, segment 2)</span> &mdash; checked directly,
+          their quadric matrices are bit-identical. This isn't four different surfaces coincidentally
+          meeting at a point; it's one surface, cut into four separate pieces by earlier clips, all
+          of which still touch this one edge. None of the four happens to be flat.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="border-color: var(--bad);">
+    <h2>What's actually wrong</h2>
+    <p>
+      A curved <code>dim=1</code> edge at <code>N=3</code> doesn't carry its own embedding plane
+      &mdash; <code>find_flat_neighbor_face</code>'s docstring explains why: "curve lives on facets,"
+      so a curved edge needs *some* flat neighboring face to read off local 2D coordinates from.
+      Every curved edge produced by capping a single cut has exactly one such neighbor, by
+      construction. The assumption breaks down after enough accumulated clips: here, four separate
+      cuts have each carved their own piece out of the same original bisector surface, and by pure
+      bad luck all four surviving pieces that still reference edge 874 are themselves curved (cut
+      by yet other bisectors), with no flat piece left touching it anywhere.
+    </p>
+    <p>
+      This is exactly the case the function's own docstring already named as out of scope ("two
+      different segments' own caps meeting... beyond what either of those callers can handle yet")
+      &mdash; not a surprise bug, a known, deliberately-unhandled gap now pinned down to a concrete,
+      minimal repro instead of just a name. Fixing it needs a genuine "locate a curved edge with no
+      flat context at all" primitive &mdash; parametrizing directly off the edge's own two defining
+      quadrics rather than borrowing a neighboring face's coordinates &mdash; not a small patch.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Reproducing this</h2>
+    <p>The exact repro, as run:</p>
+    <pre>entries = [
+    (:segment, SVector(-3.413, -1.206, 1.591), SVector(1.026, 3.319, -2.458), 1, 2),
+    (:segment, SVector(2.161, 2.244, 1.362), SVector(-2.658, 0.569, -0.378), 3, 4),
+    (:segment, SVector(-1.581, -3.989, 0.536), SVector(0.928, -2.434, -3.9), 5, 6),
+]
+cx, feats = multi_complex(entries, Val(3))
+# ERROR: find_flat_neighbor_face: edge 874 has no live flat neighboring face --
+#        can't locate a curved edge without one</pre>
+  </div>
+
+</main>
+<script>
+(function() {
+  // Same drag-to-rotate / orthographic / painter's-algorithm approach as
+  // the tie-locus gallery's Scene3D, adapted to this report's own
+  // primitives (finite segments, a traced polyline, marker points, a
+  // ruled-surface wireframe) instead of the gallery's abstract feature
+  // types.
+  class Scene3D {
+    constructor(canvas, data, cssSize) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.data = data;
+      this.yaw = 0.7; this.pitch = 0.35;
+      this.dragging = false; this.lastX = 0; this.lastY = 0;
+      this.W = cssSize; this.H = cssSize;
+      this.viewR = this.computeViewRadius();
+      canvas.addEventListener('pointerdown', (e) => {
+        this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!this.dragging) return;
+        const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
+        this.yaw += dx * 0.012; this.pitch += dy * 0.012;
+        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
+        this.lastX = e.clientX; this.lastY = e.clientY;
+        this.render();
+      });
+      canvas.addEventListener('pointerup', () => { this.dragging = false; });
+      canvas.addEventListener('pointerleave', () => { this.dragging = false; });
+      this.render();
+    }
+    computeViewRadius() {
+      let maxR = 1.0;
+      const norm = (p) => Math.hypot(p[0], p[1], p[2]);
+      for (const s of (this.data.segments || [])) { maxR = Math.max(maxR, norm(s.p1), norm(s.p2)); }
+      for (const w of (this.data.wireframe || [])) { maxR = Math.max(maxR, norm(w.p1), norm(w.p2)); }
+      for (const pl of (this.data.polylines || [])) { for (const p of pl.pts) maxR = Math.max(maxR, norm(p)); }
+      for (const m of (this.data.markers || [])) { maxR = Math.max(maxR, norm(m.p)); }
+      return maxR;
+    }
+    project(p) {
+      let [x, y, z] = p;
+      const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+      let x1 = x * cy + z * sy;
+      let z1 = -x * sy + z * cy;
+      const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+      let y2 = y * cp - z1 * sp;
+      let z2 = y * sp + z1 * cp;
+      return [x1, y2, z2];
+    }
+    render() {
+      const ctx = this.ctx, W = this.W, H = this.H;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+      const scale = Math.min(W, H) / (2.4 * this.viewR);
+      const toScreen = (x, y) => [W / 2 + x * scale, H / 2 - y * scale];
+      const prims = [];
+      for (const w of (this.data.wireframe || [])) {
+        const a = this.project(w.p1), b = this.project(w.p2);
+        prims.push({ depth: (a[2] + b[2]) / 2, draw: () => {
+          const [ax, ay] = toScreen(a[0], a[1]), [bx, by] = toScreen(b[0], b[1]);
+          ctx.strokeStyle = 'rgba(70,130,180,0.35)'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+        }});
+      }
+      for (const s of (this.data.segments || [])) {
+        const a = this.project(s.p1), b = this.project(s.p2);
+        prims.push({ depth: (a[2] + b[2]) / 2, draw: () => {
+          const [ax, ay] = toScreen(a[0], a[1]), [bx, by] = toScreen(b[0], b[1]);
+          ctx.strokeStyle = s.color; ctx.lineWidth = 5;
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+          ctx.fillStyle = s.color;
+          [[ax, ay], [bx, by]].forEach(([sx, sy]) => { ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 2 * Math.PI); ctx.fill(); });
+        }});
+      }
+      for (const pl of (this.data.polylines || [])) {
+        const proj = pl.pts.map((p) => this.project(p));
+        const depth = proj.reduce((acc, p) => acc + p[2], 0) / proj.length;
+        prims.push({ depth, draw: () => {
+          ctx.strokeStyle = pl.color; ctx.lineWidth = 4;
+          ctx.beginPath();
+          proj.forEach((p, i) => { const [sx, sy] = toScreen(p[0], p[1]); i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy); });
+          ctx.stroke();
+        }});
+      }
+      for (const m of (this.data.markers || [])) {
+        const pr = this.project(m.p);
+        prims.push({ depth: pr[2], draw: () => {
+          const [sx, sy] = toScreen(pr[0], pr[1]);
+          ctx.beginPath(); ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
+          ctx.fillStyle = m.color; ctx.fill();
+          ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
+        }});
+      }
+      prims.sort((a, b) => a.depth - b.depth);
+      for (const pr of prims) pr.draw();
+    }
+  }
+
+  function setupCanvas(canvas) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssSize = canvas.getBoundingClientRect().width || canvas.width;
+    canvas.width = cssSize * dpr; canvas.height = cssSize * dpr;
+    canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    return cssSize;
+  }
+
+  function init() {
+    document.querySelectorAll('canvas.scene3d').forEach((canvas) => {
+      const cssSize = setupCanvas(canvas);
+      const src = canvas.getAttribute('data-src');
+      fetch(src).then(r => r.json()).then(data => {
+        canvas._scene = new Scene3D(canvas, data, cssSize);
+      }).catch(err => {
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#faa'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      });
+    });
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('canvas.scene3d').forEach((canvas) => {
+        if (!canvas._scene) return;
+        const cssSize = setupCanvas(canvas);
+        canvas._scene.W = cssSize; canvas._scene.H = cssSize; canvas._scene.render();
+      });
+    });
+  }
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>

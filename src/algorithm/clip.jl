@@ -1129,6 +1129,21 @@ function face_boundary_faces(cx::CellComplex{3}, face_id::Int)
 end
 
 """
+An orthonormal `(origin, e1, e2)` frame for a flat (`is_curved(quad) ==
+false`, i.e. `M ≈ 0`) `Quadric`'s own plane, anchored at
+`point_on_plane` (a point already known to satisfy `quad`'s equation --
+e.g. a new trace edge's own endpoint). A flat quadric's equation reduces
+to `2b·x+c=0`, so its plane's normal is exactly `normalize(quad.b)`.
+"""
+function flat_quad_frame(quad::Quadric{3,Float64}, point_on_plane::Pt{3,Float64})
+    n = normalize(quad.b)
+    seed = abs(n[1]) < 0.9 ? SVector(1.0, 0.0, 0.0) : SVector(0.0, 1.0, 0.0)
+    e1 = normalize(seed - dot(seed, n) * n)
+    e2 = cross(n, e1)
+    return point_on_plane, e1, e2
+end
+
+"""
 Finds a live, flat (`curve === nothing`) `dim=2` face that references
 `edge_id` as an immediate subcell -- used to locate a curved edge's own
 embedding: a curved `dim=1` edge's own `curve` field alone doesn't pin
@@ -1154,9 +1169,41 @@ function find_flat_neighbor_face(cx::CellComplex{3}, edge_id::Int)
 end
 
 """
+The flat `(origin, e1, e2)` frame a curved `dim=1` edge's own arc is
+confined to, or `nothing` if there genuinely isn't one to find.
+
+Checks `cx.face_frames` for an entry cached directly against `edge_id`
+first -- both `clip_flat_face_3d!` (the face being clipped is itself the
+plane) and `clip_curved_face_3d!` (when its own clipping `quad` is flat,
+via `flat_quad_frame`) record this eagerly at the moment they create or
+split such an edge, since the frame is trivially known right there,
+before any *later* clip has a chance to supersede every face that would
+otherwise still reference it. Only edges predating that caching (if any
+ever escape it) fall back to `find_flat_neighbor_face`'s live-neighbor
+search.
+
+This is what actually closes the gap `find_flat_neighbor_face`'s own
+docstring names as unhandled: "two different segments' own caps
+meeting" -- confirmed as a real, reachable failure (see the dashboard's
+"an edge with no flat neighboring face" report) precisely because a live
+flat neighbor isn't guaranteed to survive as long as the edge does, even
+though the frame itself never changes once the edge exists.
+"""
+function edge_flat_frame(cx::CellComplex{3}, edge_id::Int)
+    haskey(cx.face_frames, edge_id) && return cx.face_frames[edge_id]
+    for f in get(cx.referenced_by, edge_id, Int[])
+        haskey(cx.superseded_by, f) && continue
+        fnode = cx.nodes[f]
+        fnode.dim == 2 || continue
+        fnode.curve === nothing && return flat_face_frame_cached!(cx, f)
+    end
+    return nothing
+end
+
+"""
 Every point (arc order, `p1` -> `p2`, inclusive tolerance) where `quad`
 crosses curved edge `edge_id`'s own bounded arc -- tries the ordinary
-flat-neighbor route first (`find_flat_neighbor_face`, exact, the same one
+flat-neighbor route first (`edge_flat_frame`, exact, the same one
 every other curved edge in this codebase uses, reusing 2D
 `edge_curve_crossings` restricted to that flat neighbor's own frame --
 already general to up to 4 crossings via Bezout, not just one), falling
@@ -1175,14 +1222,13 @@ function curved_edge_all_crossings(cx::CellComplex{3}, edge_id::Int, quad::Quadr
     enode = cx.nodes[edge_id]
     p1id, p2id = enode.subcells
     p1, p2 = cx.nodes[p1id].point, cx.nodes[p2id].point
-    flat_face = try
-        find_flat_neighbor_face(cx, edge_id)
-    catch e
-        enode.curve2 === nothing && rethrow(e)
+    frame3 = edge_flat_frame(cx, edge_id)
+    if frame3 === nothing
+        enode.curve2 === nothing && error("curved_edge_all_crossings: edge $edge_id has no flat frame (cached or live) and no curve2 -- can't locate a curved edge without one of the two")
         frame = ruled_frame(enode.curve2)
         return ruled_trace_all_crossings(enode.curve, quad, frame, p1, p2)
     end
-    origin, e1, e2 = flat_face_frame_cached!(cx, flat_face)
+    origin, e1, e2 = frame3
     quad2 = restrict_to_plane(quad, origin, e1, e2)
     edge_curve2 = enode.curve === nothing ? nothing : restrict_to_plane(enode.curve, origin, e1, e2)
     to_local(p) = SVector(dot(p - origin, e1), dot(p - origin, e2))
@@ -1207,14 +1253,13 @@ function curved_edge_strict_interior_crossings(cx::CellComplex{3}, edge_id::Int,
     enode = cx.nodes[edge_id]
     p1id, p2id = enode.subcells
     p1, p2 = cx.nodes[p1id].point, cx.nodes[p2id].point
-    flat_face = try
-        find_flat_neighbor_face(cx, edge_id)
-    catch e
-        enode.curve2 === nothing && rethrow(e)
+    frame3 = edge_flat_frame(cx, edge_id)
+    if frame3 === nothing
+        enode.curve2 === nothing && error("curved_edge_strict_interior_crossings: edge $edge_id has no flat frame (cached or live) and no curve2 -- can't locate a curved edge without one of the two")
         frame = ruled_frame(enode.curve2)
         return ruled_trace_all_crossings(enode.curve, quad, frame, p1, p2)
     end
-    origin, e1, e2 = flat_face_frame_cached!(cx, flat_face)
+    origin, e1, e2 = frame3
     quad2 = restrict_to_plane(quad, origin, e1, e2)
     edge_curve2 = enode.curve === nothing ? nothing : restrict_to_plane(enode.curve, origin, e1, e2)
     to_local(p) = SVector(dot(p - origin, e1), dot(p - origin, e2))
@@ -1619,6 +1664,10 @@ function clip_flat_face_3d!(cx::CellComplex{3}, face_id::Int, quad::Quadric{3,Fl
                     # unchanged -- splitting an edge doesn't change *which*
                     # bisector it lies on, only where it's now bounded.
                     pid = add_cell!(cx, 1, Label(), [verts[i], verts[i+1]]; curve=enode.curve)
+                    # Cache *this* face's own frame directly against the new
+                    # piece's id, not just `face_id`'s (see the matching
+                    # comment on the trace-edge creation below for why).
+                    enode.curve !== nothing && (cx.face_frames[pid] = (origin, e1, e2))
                     push!(pieces, (side, pid, verts[i], verts[i+1]))
                     push!(piece_ids, pid)
                 end
@@ -1691,17 +1740,29 @@ function clip_flat_face_3d!(cx::CellComplex{3}, face_id::Int, quad::Quadric{3,Fl
     # exactly, with whether the resulting collection of trace edges
     # actually stitches into one connected cap left to
     # `clip_top_cell_3d!`'s own existing check.
+    # Every new trace edge here is confined to `quad` *and* this face's own
+    # flat plane -- exactly what `edge_flat_frame` needs cached against its
+    # own id up front. Without this, recovering that plane later relies on
+    # a live flat neighboring face still existing (`find_flat_neighbor_face`)
+    # -- true at the moment of creation (this very frame, `origin`/`e1`/`e2`,
+    # already known right here) but not guaranteed to stay true after
+    # enough further clips fragment the neighborhood into curved-only
+    # pieces (confirmed as a real, reachable failure: see the dashboard's
+    # "an edge with no flat neighboring face" report). Caching eagerly
+    # means later lookups never depend on anything surviving.
     trace_edges = Int[]
     run_trace_edge = Vector{Int}(undef, length(runs))
     if length(runs) == 2
         first_v, last_v = runs[1][1][3], runs[1][end][4]
         shared_edge = add_cell!(cx, 1, Label(), [last_v, first_v]; curve=(is_curved(quad) ? quad : nothing))
+        is_curved(quad) && (cx.face_frames[shared_edge] = (origin, e1, e2))
         push!(trace_edges, shared_edge)
         run_trace_edge .= shared_edge
     else
         for (i, run) in enumerate(runs)
             first_v, last_v = run[1][3], run[end][4]
             trace_edge = add_cell!(cx, 1, Label(), [last_v, first_v]; curve=(is_curved(quad) ? quad : nothing))
+            is_curved(quad) && (cx.face_frames[trace_edge] = (origin, e1, e2))
             push!(trace_edges, trace_edge)
             run_trace_edge[i] = trace_edge
         end
@@ -1892,8 +1953,11 @@ function clip_curved_face_3d!(cx::CellComplex{3}, face_id::Int, quad::Quadric{3,
                     # further doesn't change which two surfaces it's
                     # confined to, so every new piece inherits `curve2`
                     # too, the same way `curve` already gets preserved
-                    # across a split.
+                    # across a split. Same for a cached flat frame
+                    # (`edge_flat_frame`): a piece of `e`'s own arc is
+                    # still confined to exactly the same plane `e` was.
                     pid = add_cell!(cx, 1, Label(), [verts[i], verts[i+1]]; curve=enode.curve, curve2=enode.curve2)
+                    haskey(cx.face_frames, e) && (cx.face_frames[pid] = cx.face_frames[e])
                     push!(pieces, (side, pid, verts[i], verts[i+1]))
                     push!(piece_ids, pid)
                 end
@@ -1953,17 +2017,30 @@ function clip_curved_face_3d!(cx::CellComplex{3}, face_id::Int, quad::Quadric{3,
     # Same "single cut needs one *shared* edge, not two coincident ones"
     # subtlety as `clip_flat_face_3d!` -- see its own comment on this same
     # step for the full rationale.
+    # `quad` flat's own frame, computed once (only needed at all when
+    # `quad` isn't curved -- see the cache-write comment just below).
+    flat_quad_frame3 = is_curved(quad) ? nothing : flat_quad_frame(quad, cx.nodes[runs[1][1][3]].point)
+
     trace_edges = Int[]
     run_trace_edge = Vector{Int}(undef, length(runs))
     if length(runs) == 2
         first_v, last_v = runs[1][1][3], runs[1][end][4]
         shared_edge = add_cell!(cx, 1, Label(), [last_v, first_v]; curve=Q1, curve2=(is_curved(quad) ? quad : nothing))
+        # `quad` flat means this edge's only remaining anchor is a flat
+        # *plane*, not a second curved quadric -- `curve2` can't carry
+        # that (it's typed for genuinely curved, ruled surfaces), so cache
+        # the plane frame directly instead of leaving it to be re-derived
+        # later from whichever flat face `clip_top_cell_3d!` builds out of
+        # `trace_edges` -- that face is exactly the kind of thing further
+        # clips can supersede, the same staleness this whole fix targets.
+        flat_quad_frame3 !== nothing && (cx.face_frames[shared_edge] = flat_quad_frame3)
         push!(trace_edges, shared_edge)
         run_trace_edge .= shared_edge
     else
         for (i, run) in enumerate(runs)
             first_v, last_v = run[1][3], run[end][4]
             trace_edge = add_cell!(cx, 1, Label(), [last_v, first_v]; curve=Q1, curve2=(is_curved(quad) ? quad : nothing))
+            flat_quad_frame3 !== nothing && (cx.face_frames[trace_edge] = flat_quad_frame3)
             push!(trace_edges, trace_edge)
             run_trace_edge[i] = trace_edge
         end

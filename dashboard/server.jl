@@ -7,6 +7,9 @@ include(joinpath(@__DIR__, "cases.jl"))
 const IMAGES_DIR = joinpath(@__DIR__, "images")
 mkpath(IMAGES_DIR)
 
+const GALLERY_DATA_DIR = joinpath(@__DIR__, "public", "gallery_data")
+mkpath(GALLERY_DATA_DIR)
+
 """
 Shared, mutable dashboard state: the latest known result for each case
 (`nothing` until it's run at least once), the id of the most recently
@@ -111,8 +114,9 @@ const REPORT_LIST = [
     ("hole-topology", "report_hole_topology.html", "Cell territory with a hole", "2026-07-30"),
     ("triangulation-difficulties", "report_triangulation_difficulties.html", "Triangulation difficulties (historical)", "2026-07-30"),
     ("infinity-layer", "report_infinity_layer.html", "Layer at infinity (planning)", "2026-08-04"),
-    ("nonmanifold-cap", "report_nonmanifold_cap.html", "3D: a genuine tie point (3 segments)", "2026-08-07"),
+    ("curvedcap", "report_curvedcap.html", "3D: an edge with no flat neighboring face (3 segments) [FIXED]", "2026-08-09"),
     ("tie-gallery", "report_tie_gallery.html", "Every k-way tie locus, n=2 and n=3", "2026-08-08"),
+    ("tie-progress", "report_tie_progress.html", "Tie progress: all 150 three-segment stress cases", "2026-08-09"),
 ]
 const REPORTS = Dict(key => file for (key, file, _, _) in REPORT_LIST)
 
@@ -169,7 +173,12 @@ function handle(req::HTTP.Request)
     elseif startswith(target, "/images/")
         path = joinpath(IMAGES_DIR, basename(target))
         isfile(path) || return 404, [], "not found"
-        return 200, ["Content-Type" => "image/png"], read(path)
+        ctype = endswith(path, ".json") ? "application/json" : "image/png"
+        return 200, ["Content-Type" => ctype], read(path)
+    elseif startswith(target, "/gallery-data/")
+        path = joinpath(GALLERY_DATA_DIR, basename(target))
+        isfile(path) || return 404, [], "not found"
+        return 200, ["Content-Type" => "application/json"], read(path)
     elseif target == "/cases" && req.method == "GET"
         lock(STATE.lock) do
             entries = String[]

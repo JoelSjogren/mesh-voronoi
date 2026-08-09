@@ -1,0 +1,1588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tie progress: 3-segment construction, all 150 stress cases</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;
+    --card-bg: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e2e5ea;
+    --accent: #3b6fd6;
+    --bad: #d1453b;
+    --good: #1a9d5c;
+    --warn: #b5860a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --card-bg: #1d2027; --text: #e8eaed; --muted: #9aa1ac;
+      --border: #2c3038; --accent: #6ea1ff; --bad: #ff6b61; --good: #3fcf82; --warn: #e0b13e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.55;
+  }
+  header { padding: 1.5rem 2rem; border-bottom: 1px solid var(--border); background: var(--card-bg); }
+  header h1 { margin: 0 0 0.3rem; font-size: 1.4rem; }
+  header .sub { color: var(--muted); font-size: 0.95rem; max-width: 70ch; }
+  .toolbar { display: flex; align-items: center; gap: 1rem; margin-top: 0.9rem; flex-wrap: wrap; }
+  .toolbar button {
+    font: inherit; font-size: 0.85rem; padding: 0.4rem 0.8rem; border-radius: 6px;
+    border: 1px solid var(--accent); background: none; color: var(--accent); cursor: pointer;
+  }
+  .toolbar button:hover { background: var(--accent); color: #fff; }
+  .toolbar .legend { font-size: 0.82rem; color: var(--muted); display: flex; gap: 1rem; align-items: center; }
+  .legend .swatch { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: 50%; margin-right: 0.3rem; vertical-align: -1px; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 0 1.5rem; }
+  .group { padding: 1.6rem 0; border-bottom: 1px solid var(--border); }
+  .group:last-of-type { border-bottom: none; }
+  .group-title { font-size: 1.15rem; margin: 0 0 0.2rem; }
+  .group-count { color: var(--muted); font-weight: 400; font-size: 0.9rem; }
+  .group-note { color: var(--muted); font-size: 0.88rem; max-width: 90ch; margin: 0 0 1rem; }
+  .passing-group .group-title { color: var(--good); }
+  .case-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.7rem; }
+  @media (max-width: 560px) {
+    .case-grid { grid-template-columns: 1fr; }
+  }
+  .case-card {
+    margin: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; padding: 0.4rem;
+  }
+  .case-num {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem;
+    color: var(--muted); padding: 0 0.15rem 0.35rem;
+  }
+  .check { font-weight: 700; }
+  .check.ok { color: var(--good); }
+  .check.bad { color: var(--bad); }
+  .check.warn { color: var(--warn); cursor: help; }
+  .zoom-controls { display: inline-flex; gap: 0.25rem; }
+  .zoom-btn {
+    font: inherit; font-size: 0.85rem; line-height: 1; width: 1.15rem; height: 1.15rem; padding: 0;
+    border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .zoom-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .expand-btn { display: none; }
+  @media (hover: hover) and (pointer: fine) {
+    .expand-btn { display: inline-flex; }
+  }
+  .lightbox {
+    position: fixed; inset: 0; background: rgba(10,10,14,0.78); z-index: 1000;
+    display: none; align-items: center; justify-content: center; padding: 3rem 2rem;
+  }
+  .lightbox.open { display: flex; }
+  .lightbox-inner { position: relative; width: min(88vw, 88vh); max-width: 920px; }
+  .lightbox-inner canvas {
+    width: 100%; aspect-ratio: 1 / 1; display: block; border-radius: 10px;
+    background: #fff; touch-action: none; cursor: grab; box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+  }
+  .lightbox-inner canvas:active { cursor: grabbing; }
+  .lightbox-close {
+    position: absolute; top: -2.4rem; right: 0; background: none; border: none;
+    color: #fff; font-size: 1.9rem; line-height: 1; cursor: pointer; padding: 0.2rem 0.5rem;
+  }
+  .lightbox-close:hover { color: var(--accent); }
+  .case-card canvas.scene3d {
+    display: block; width: 100%; aspect-ratio: 1 / 1; border-radius: 5px;
+    background: #fff; touch-action: none; cursor: grab;
+  }
+  .case-card canvas.scene3d:active { cursor: grabbing; }
+  .skip-box {
+    aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 0.8rem; background: var(--bg); border-radius: 5px;
+  }
+  body.hide-passing .case-card.passing { display: none; }
+  footer { padding: 2rem 0 3rem; }
+  footer p { color: var(--muted); font-size: 0.82rem; max-width: 70ch; }
+  footer .wrap { max-width: 1400px; }
+</style>
+</head>
+<body>
+<header>
+  <div style="margin-bottom:0.6rem;"><!--NAV--></div>
+  <h1>Tie progress &mdash; three-segment construction, all 150 stress cases</h1>
+  <div class="sub">
+    Every case from the same random-seed stress suite used throughout this session's fixes, numbered by
+    seed, grouped by root cause and sorted largest group first. Each scene is rendered from a live run of
+    the actual construction code: the 3 input segments, a reference point cloud on the true <em>3-way</em>
+    tie curve (all three segments simultaneously equidistant &mdash; 2 constraints in 3D, genuinely
+    1-dimensional, not either pairwise bisector, which is a 2D surface and the wrong thing to compare
+    against a curve; Gauss&ndash;Newton on both constraints at once, using the exact same clamped
+    segment-distance the construction's own correctness check uses), and, for cases that succeeded, the
+    constructed complex's own boundary edges overlaid in black (bounding-box edges excluded -- domain
+    boundary, not tie structure) so they can be checked against the curve they should run through. Drag
+    any scene to rotate.
+  </div>
+  <div class="toolbar">
+    <button id="toggle-passing">Hide succeeding cases</button>
+    <div class="legend">
+      <span><span class="swatch" style="background:#d1453b"></span>segment 1</span>
+      <span><span class="swatch" style="background:#2e8b57"></span>segment 2</span>
+      <span><span class="swatch" style="background:#4169e1"></span>segment 3</span>
+      <span><span class="swatch" style="background:rgba(53,79,186,0.7)"></span>true 3-way tie curve</span>
+      <span><span class="swatch" style="background:#000"></span>constructed complex edges</span>
+      <span>&#9888; curve deviates from the tie locus despite passing the vertex-label check</span>
+    </div>
+  </div>
+</header>
+<main>
+  <section class="group passing-group" data-group="ok">
+    <div class="wrap">
+      <h2 class="group-title">Succeeded <span class="group-count">(89)</span></h2>
+      <p class="group-note">Construction succeeded and every vertex label was verified against the exact brute-force predicate. Additionally auto-checked: for each case the constructed curve is sampled and compared against the reference cloud; 6 case(s) pass the vertex-label check yet have a curve that runs measurably off the true tie locus (worst sampled point &gt;0.3 units from the nearest cloud point, well above the ~0.02&ndash;0.2 sampling noise every genuinely-correct case shows) &mdash; flagged with &#9888; instead of &#10003;: case(s) #16, #29, #81, #113, #132, #147.</p>
+      <div class="case-grid">
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#1<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_001.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#3<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_003.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#4<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_004.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#7<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_007.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#8<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_008.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#9<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_009.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#10<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_010.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#12<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_012.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#13<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_013.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#14<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_014.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="ok">
+        <div class="case-num">#16<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check warn" title="constructed curve deviates 0.441 units from the true tie-locus point cloud -- likely a real bug despite every vertex label checking out">&#9888;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_016.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#19<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_019.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#20<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_020.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#21<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_021.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#23<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_023.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#24<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_024.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#25<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_025.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#26<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_026.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#27<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_027.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#28<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_028.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="ok">
+        <div class="case-num">#29<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check warn" title="constructed curve deviates 1.476 units from the true tie-locus point cloud -- likely a real bug despite every vertex label checking out">&#9888;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_029.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#30<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_030.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#31<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_031.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#33<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_033.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#35<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_035.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#37<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_037.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#40<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_040.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#41<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_041.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#43<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_043.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#44<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_044.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#45<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_045.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#46<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_046.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#47<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_047.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#48<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_048.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#50<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_050.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#51<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_051.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#53<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_053.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#54<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_054.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#55<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_055.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#56<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_056.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#59<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_059.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#65<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_065.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#70<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_070.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#71<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_071.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#73<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_073.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#76<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_076.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#77<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_077.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#78<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_078.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="ok">
+        <div class="case-num">#81<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check warn" title="constructed curve deviates 3.756 units from the true tie-locus point cloud -- likely a real bug despite every vertex label checking out">&#9888;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_081.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#82<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_082.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#83<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_083.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#84<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_084.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#88<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_088.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#89<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_089.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#91<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_091.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#92<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_092.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#97<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_097.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#100<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_100.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#101<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_101.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#102<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_102.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#105<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_105.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#106<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_106.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#107<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_107.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#108<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_108.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#109<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_109.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#111<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_111.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="ok">
+        <div class="case-num">#113<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check warn" title="constructed curve deviates 1.784 units from the true tie-locus point cloud -- likely a real bug despite every vertex label checking out">&#9888;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_113.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#116<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_116.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#118<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_118.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#120<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_120.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#121<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_121.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#122<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_122.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#124<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_124.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#125<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_125.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#126<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_126.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#128<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_128.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#131<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_131.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="ok">
+        <div class="case-num">#132<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check warn" title="constructed curve deviates 1.042 units from the true tie-locus point cloud -- likely a real bug despite every vertex label checking out">&#9888;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_132.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#135<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_135.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#137<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_137.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#139<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_139.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#140<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_140.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#142<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_142.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#144<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_144.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#145<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_145.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#146<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_146.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="ok">
+        <div class="case-num">#147<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check warn" title="constructed curve deviates 0.514 units from the true tie-locus point cloud -- likely a real bug despite every vertex label checking out">&#9888;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_147.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#149<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_149.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card passing" data-status="ok">
+        <div class="case-num">#150<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check ok">&#10003;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_150.json" width="260" height="260"></canvas>
+      </figure>
+      </div>
+    </div>
+  </section>
+  <section class="group" data-group="disagree_on_side">
+    <div class="wrap">
+      <h2 class="group-title">Bug: edges disagree on side (no crossing found) <span class="group-count">(27)</span></h2>
+      <p class="group-note">The largest remaining failure group. Root-caused precisely in one repro (seed 2, face 802): 3 of its 9 boundary edges have cached planes with normal [0.958, 0.288, 0.007] &mdash; essentially perpendicular to face 802's own [0,0,1] (dot &asymp; 0.007) &mdash; confirmed via exact plane-deviation, not numerical noise. These are genuine edges of some *other*, unrelated flat face that ended up in this face's own boundary-edge list. Not a branch-point walk-disambiguation issue (every vertex here has exactly two live incident edges, a clean topological loop) &mdash; the contamination happens further upstream, most likely in the nested-clip bookkeeping (`extra_a`/`extra_b`/`edge_cache`) that assigns resulting pieces to the right face across a single multi-cell clip pass. Not yet fixed; needs deeper tracing through that bookkeeping than this session reached.</p>
+      <div class="case-grid">
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#2<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_002.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#15<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_015.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#32<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_032.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#34<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_034.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#39<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_039.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#42<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_042.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#61<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_061.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#63<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_063.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#66<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_066.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#68<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_068.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#72<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_072.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#74<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_074.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#79<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_079.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#80<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_080.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#86<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_086.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#87<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_087.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#90<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_090.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#93<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_093.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#95<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_095.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#98<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_098.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#103<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_103.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#114<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_114.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#115<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_115.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#117<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_117.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#130<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_130.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#133<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_133.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#143<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_143.json" width="260" height="260"></canvas>
+      </figure>
+      </div>
+    </div>
+  </section>
+  <section class="group" data-group="no_closed_loop">
+    <div class="wrap">
+      <h2 class="group-title">Bug: boundary forms no closed loop (dangling spike) <span class="group-count">(10)</span></h2>
+      <p class="group-note">A flat face's own boundary edges form only dangling spikes, no genuine closed loop -- not yet root-caused to the same depth as the group above.</p>
+      <div class="case-grid">
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#17<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_017.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#18<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_018.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#49<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_049.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#60<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_060.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#62<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_062.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#67<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_067.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#69<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_069.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#94<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_094.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#99<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_099.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#104<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_104.json" width="260" height="260"></canvas>
+      </figure>
+      </div>
+    </div>
+  </section>
+  <section class="group" data-group="empty_collection">
+    <div class="wrap">
+      <h2 class="group-title">Bug: collection must be non-empty (insert_features!) <span class="group-count">(10)</span></h2>
+      <p class="group-note">A `first()` call on an empty collection inside `insert_features!` -- same exact stack trace across every case in this group, a strong signal of one shared cause, not yet traced further.</p>
+      <div class="case-grid">
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#5<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_005.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#6<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_006.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#22<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_022.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#36<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_036.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#123<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_123.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#127<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_127.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#134<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_134.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#136<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_136.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#141<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_141.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#148<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_148.json" width="260" height="260"></canvas>
+      </figure>
+      </div>
+    </div>
+  </section>
+  <section class="group" data-group="empty_floops_methoderror">
+    <div class="wrap">
+      <h2 class="group-title">Bug: empty face-boundary loops -> MethodError <span class="group-count">(10)</span></h2>
+      <p class="group-note">`curved_face_local_frame` called with an untyped empty `Vector{Any}` -- happens when a face's own boundary decomposes into zero loops at all; a real (if narrow) type-safety gap, not yet fixed.</p>
+      <div class="case-grid">
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#11<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_011.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#38<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_038.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#57<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_057.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#58<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_058.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#75<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_075.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#85<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_085.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#110<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_110.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#119<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_119.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#129<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_129.json" width="260" height="260"></canvas>
+      </figure>
+      <figure class="case-card" data-status="fail">
+        <div class="case-num">#138<span class="zoom-controls">
+          <button class="zoom-btn zoom-out" type="button" aria-label="zoom out">&minus;</button>
+          <button class="zoom-btn zoom-in" type="button" aria-label="zoom in">+</button>
+          <button class="zoom-btn expand-btn" type="button" aria-label="inspect fullscreen">&#9974;</button>
+        </span><span class="check bad">&#10007;</span></div>
+        <canvas class="scene3d" data-src="/gallery-data/tieprogress_138.json" width="260" height="260"></canvas>
+      </figure>
+      </div>
+    </div>
+  </section>
+  <section class="group" data-group="skip">
+    <div class="wrap">
+      <h2 class="group-title">Skipped (degenerate: two endpoints under 1.0 apart) <span class="group-count">(4)</span></h2>
+      <p class="group-note">Not a bug: the random segment generator itself rejects any segment under 1.0 units long and redraws the trial, exactly like every other stress run this session.</p>
+      <div class="case-grid">
+      <figure class="case-card" data-status="skip">
+        <div class="case-num">#52<span class="check bad">&#10007;</span></div>
+        <div class="skip-box">skipped</div>
+      </figure>
+      <figure class="case-card" data-status="skip">
+        <div class="case-num">#64<span class="check bad">&#10007;</span></div>
+        <div class="skip-box">skipped</div>
+      </figure>
+      <figure class="case-card" data-status="skip">
+        <div class="case-num">#96<span class="check bad">&#10007;</span></div>
+        <div class="skip-box">skipped</div>
+      </figure>
+      <figure class="case-card" data-status="skip">
+        <div class="case-num">#112<span class="check bad">&#10007;</span></div>
+        <div class="skip-box">skipped</div>
+      </figure>
+      </div>
+    </div>
+  </section>
+</main>
+<footer>
+  <div class="wrap">
+    <p>Reference-cloud points lie on the true 3-way tie curve (all three segments simultaneously
+    equidistant; exact, independent of whatever the construction produces), sampled with the same clamped
+    segment-distance formula the project's own `recompute_feature_label` ground-truth check uses. Where
+    the black construction edges and the blue curve disagree, run somewhere unexpected, or fail to trace
+    it cleanly, that's exactly where to look for the bug behind that case's own group.</p>
+  </div>
+</footer>
+<div id="lightbox" class="lightbox" aria-hidden="true">
+  <div class="lightbox-inner">
+    <button id="lightbox-close" class="lightbox-close" type="button" aria-label="close">&times;</button>
+    <canvas id="lightbox-canvas" class="scene3d" width="900" height="900"></canvas>
+  </div>
+</div>
+<script>
+(function() {
+  class Scene3D {
+    constructor(canvas, data, cssSize) {
+      this.canvas = canvas;
+      this.ctx = canvas.getContext('2d');
+      this.data = data;
+      this.yaw = 0.7; this.pitch = 0.35; this.zoom = 1.0;
+      this.dragging = false; this.lastX = 0; this.lastY = 0;
+      this.W = cssSize; this.H = cssSize;
+      this.viewR = this.computeViewRadius();
+      canvas.addEventListener('pointerdown', (e) => {
+        this.dragging = true; this.lastX = e.clientX; this.lastY = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!this.dragging) return;
+        const dx = e.clientX - this.lastX, dy = e.clientY - this.lastY;
+        this.yaw += dx * 0.012; this.pitch += dy * 0.012;
+        this.pitch = Math.max(-1.4, Math.min(1.4, this.pitch));
+        this.lastX = e.clientX; this.lastY = e.clientY;
+        this.render();
+      });
+      canvas.addEventListener('pointerup', () => { this.dragging = false; });
+      canvas.addEventListener('pointerleave', () => { this.dragging = false; });
+      this.render();
+    }
+    computeViewRadius() {
+      // Segments alone under-fit the view: the true tie loci and the
+      // constructed complex's own edges are frequently unbounded surfaces
+      // (hyperbolic paraboloids etc.) that reach well past the segments
+      // themselves -- fitting the camera to segments only clipped most of
+      // the interesting structure off-canvas.
+      let maxR = 1.0;
+      const norm = (p) => Math.hypot(p[0], p[1], p[2]);
+      for (const s of (this.data.segments || [])) { maxR = Math.max(maxR, norm(s.p1), norm(s.p2)); }
+      for (const p of (this.data.reference_cloud || [])) { maxR = Math.max(maxR, norm(p.p)); }
+      for (const pl of (this.data.complex_edges || [])) { for (const p of pl.pts) maxR = Math.max(maxR, norm(p)); }
+      return maxR;
+    }
+    project(p) {
+      let [x, y, z] = p;
+      const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+      let x1 = x * cy + z * sy;
+      let z1 = -x * sy + z * cy;
+      const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+      let y2 = y * cp - z1 * sp;
+      let z2 = y * sp + z1 * cp;
+      return [x1, y2, z2];
+    }
+    render() {
+      const ctx = this.ctx, W = this.W, H = this.H;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, W, H);
+      const scale = (Math.min(W, H) / (2.4 * this.viewR)) * this.zoom;
+      const toScreen = (x, y) => [W / 2 + x * scale, H / 2 - y * scale];
+      const prims = [];
+      for (const p of (this.data.reference_cloud || [])) {
+        const pr = this.project(p.p);
+        prims.push({ depth: pr[2], draw: () => {
+          const [sx, sy] = toScreen(pr[0], pr[1]);
+          ctx.beginPath(); ctx.arc(sx, sy, 1.1, 0, 2 * Math.PI);
+          ctx.fillStyle = p.color; ctx.globalAlpha = 0.55; ctx.fill(); ctx.globalAlpha = 1;
+        }});
+      }
+      for (const s of (this.data.segments || [])) {
+        const a = this.project(s.p1), b = this.project(s.p2);
+        prims.push({ depth: (a[2] + b[2]) / 2, draw: () => {
+          const [ax, ay] = toScreen(a[0], a[1]), [bx, by] = toScreen(b[0], b[1]);
+          ctx.strokeStyle = s.color; ctx.lineWidth = 3.2;
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+        }});
+      }
+      for (const pl of (this.data.complex_edges || [])) {
+        const proj = pl.pts.map((p) => this.project(p));
+        const depth = proj.reduce((acc, p) => acc + p[2], 0) / proj.length;
+        prims.push({ depth, draw: () => {
+          ctx.strokeStyle = 'rgba(10,10,10,0.75)'; ctx.lineWidth = 1.3;
+          ctx.beginPath();
+          proj.forEach((p, i) => { const [sx, sy] = toScreen(p[0], p[1]); i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy); });
+          ctx.stroke();
+        }});
+      }
+      prims.sort((a, b) => a.depth - b.depth);
+      for (const pr of prims) pr.draw();
+    }
+  }
+
+  function setupCanvas(canvas) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const cssSize = canvas.getBoundingClientRect().width || canvas.width;
+    canvas.width = cssSize * dpr; canvas.height = cssSize * dpr;
+    canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    return cssSize;
+  }
+
+  function loadScene(canvas) {
+    if (canvas._loaded) return;
+    canvas._loaded = true;
+    const cssSize = setupCanvas(canvas);
+    const src = canvas.getAttribute('data-src');
+    fetch(src).then(r => r.json()).then(data => {
+      canvas._scene = new Scene3D(canvas, data, cssSize);
+    }).catch(() => {
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#faa'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    });
+  }
+
+  function applyZoom(canvas, factor) {
+    if (!canvas._scene) return;
+    canvas._scene.zoom = Math.max(0.2, Math.min(8, canvas._scene.zoom * factor));
+    canvas._scene.render();
+  }
+
+  function wireCardControls(card) {
+    const canvas = card.querySelector('canvas.scene3d');
+    if (!canvas) return;
+    const zoomIn = card.querySelector('.zoom-in');
+    const zoomOut = card.querySelector('.zoom-out');
+    const expand = card.querySelector('.expand-btn');
+    zoomIn && zoomIn.addEventListener('click', () => applyZoom(canvas, 1.25));
+    zoomOut && zoomOut.addEventListener('click', () => applyZoom(canvas, 1 / 1.25));
+    expand && expand.addEventListener('click', () => openLightbox(canvas));
+  }
+
+  let lightboxScene = null;
+
+  function openLightbox(sourceCanvas) {
+    const overlay = document.getElementById('lightbox');
+    const canvas = document.getElementById('lightbox-canvas');
+    overlay.classList.add('open');
+    overlay.setAttribute('aria-hidden', 'false');
+    const cssSize = setupCanvas(canvas);
+    const build = (data) => { lightboxScene = new Scene3D(canvas, data, cssSize); };
+    if (sourceCanvas._scene) {
+      build(sourceCanvas._scene.data);
+    } else {
+      fetch(sourceCanvas.getAttribute('data-src')).then((r) => r.json()).then(build);
+    }
+  }
+
+  function closeLightbox() {
+    const overlay = document.getElementById('lightbox');
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden', 'true');
+    lightboxScene = null;
+  }
+
+  function init() {
+    // lightbox-canvas carries class="scene3d" for styling only -- it is
+    // populated manually by openLightbox(), not lazily via data-src, so it
+    // must NOT be swept into the generic lazy-load/observer machinery below
+    // (it has no data-src; if the IntersectionObserver ever calls
+    // loadScene() on it once the modal becomes visible, that fetches
+    // "null", fails, and paints it pink, racing after -- and overwriting --
+    // openLightbox()'s own correct render).
+    const canvases = Array.from(document.querySelectorAll('canvas.scene3d')).filter((c) => c.id !== 'lightbox-canvas');
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) loadScene(entry.target);
+        }
+      }, { rootMargin: '200px' });
+      canvases.forEach((c) => io.observe(c));
+    } else {
+      canvases.forEach(loadScene);
+    }
+    document.querySelectorAll('.case-card').forEach(wireCardControls);
+    window.addEventListener('resize', () => {
+      canvases.forEach((canvas) => {
+        if (!canvas._scene) return;
+        const cssSize = setupCanvas(canvas);
+        canvas._scene.W = cssSize; canvas._scene.H = cssSize; canvas._scene.render();
+      });
+      if (lightboxScene) {
+        const lbCanvas = document.getElementById('lightbox-canvas');
+        const cssSize = setupCanvas(lbCanvas);
+        lightboxScene.W = cssSize; lightboxScene.H = cssSize; lightboxScene.render();
+      }
+    });
+    document.getElementById('toggle-passing').addEventListener('click', (e) => {
+      document.body.classList.toggle('hide-passing');
+      e.target.textContent = document.body.classList.contains('hide-passing') ? 'Show succeeding cases' : 'Hide succeeding cases';
+    });
+    document.getElementById('lightbox-close').addEventListener('click', closeLightbox);
+    document.getElementById('lightbox').addEventListener('click', (e) => {
+      if (e.target.id === 'lightbox') closeLightbox();
+    });
+    document.getElementById('lightbox').addEventListener('wheel', (e) => {
+      if (!lightboxScene) return;
+      e.preventDefault();
+      lightboxScene.zoom = Math.max(0.2, Math.min(8, lightboxScene.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      lightboxScene.render();
+    }, { passive: false });
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.getElementById('lightbox').classList.contains('open')) closeLightbox();
+    });
+  }
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
