@@ -111,17 +111,45 @@ function in_bbox(node::CellNode{2}, pt::Pt{2,Float64}; pad::Float64=0.0)
 end
 
 """
-Unit direction along which curved edge's own `curve` is single-valued --
-the eigenvector of `curve.M`'s nonzero eigenvalue. Every stored curved
-edge is a genuine parabola (`M` rank 1), so no general eigendecomposition
-is needed: for rank-1 `M` (`det(M)=0`), `M`'s own first row is already
-that eigenvector (falls out of the algebra directly). Falls back to the
-second row if the first is exactly zero.
+Unit direction along which `curve`'s own arc is single-valued (injective)
+-- projecting onto this axis never has a turning point, so any two points
+on the arc bracket everything genuinely between them (used by
+`on_arc_between`/`expand_bbox_for_curve`/`line_meets_quadric`'s own
+in-range check to tell "between p1,p2 along the curve" from a raw
+coordinate range, which breaks whenever the arc bends back on an axis).
+
+For rank-1 `M` (a parabola: point-vs-line bisector) the nonzero
+eigenvalue's own eigenvector is already that axis -- `M`'s first row
+falls out of the algebra directly, no eigendecomposition needed.
+
+For rank-2 indefinite `M` (a hyperbola: line-vs-line bisector -- confirmed
+reachable, not just theoretical, since `restrict_to_plane`d segment-vs-
+segment edges are genuinely rank 2) there are *two* principal axes, and
+only one is injective: the *transverse* axis (through the two branches'
+own vertices) doubles back on itself at the vertex, exactly the turning
+point this function exists to avoid, while the *conjugate* axis is
+injective along the whole branch. Which eigenvector is which flips with
+the hyperbola's own orientation, so it's resolved algebraically rather
+than guessed: completing the square at the curve's own center
+`x0 = -M⁻¹b` leaves `evaluate(curve,x0)` as the reduced constant `K`; the
+injective axis is whichever eigenvector's eigenvalue shares `K`'s sign
+(confirmed against a genuine repro where using the *other* axis silently
+rejected a real, in-range crossing point -- the root cause of curve2
+edges connecting two disconnected pieces of a tie locus, session 2026-08-09).
 """
 function curve_natural_axis(curve::Quadric{2,Float64})
-    r1 = SVector(curve.M[1, 1], curve.M[1, 2])
-    r = norm(r1) > 1e-12 ? r1 : SVector(curve.M[1, 2], curve.M[2, 2])
-    return r / norm(r)
+    M = curve.M
+    decomp = eigen(Symmetric(Matrix(M)))
+    vals = decomp.values
+    tol = 1e-9 * max(1.0, maximum(abs.(vals)))
+    if abs(vals[1]) < tol || abs(vals[2]) < tol
+        i = abs(vals[1]) < tol ? 2 : 1
+        return SVector{2,Float64}(decomp.vectors[:, i])
+    end
+    center = -(M \ curve.b)
+    K = evaluate(curve, center)
+    i = sign(vals[1]) == sign(K) ? 1 : 2
+    return SVector{2,Float64}(decomp.vectors[:, i])
 end
 
 """

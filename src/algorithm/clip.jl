@@ -106,7 +106,32 @@ function pencil_real_roots(Q1::SMatrix{3,3,Float64}, Q2::SMatrix{3,3,Float64})
     end
     p2, p1, p0 = c2 / c3, c1 / c3, c0 / c3
     companion = [0.0 0.0 -p0; 1.0 0.0 -p1; 0.0 1.0 -p2]
-    return [real(λ) for λ in eigvals(companion) if abs(imag(λ)) < 1e-6 * max(1.0, abs(λ))]
+    raw = [real(λ) for λ in eigvals(companion) if abs(imag(λ)) < 1e-6 * max(1.0, abs(λ))]
+    # Companion-matrix eigenvalues are noticeably less precise than the
+    # cubic's own coefficients, especially for a root far outside the
+    # [-1,2] sampling range used to fit them (confirmed reachable: a root
+    # near t=14 came out only accurate to ~1e-13 in det(Q1+t*Q2), which
+    # then propagated into a ~1e-7-relative spread in the *crossing
+    # points* recovered from it downstream -- 100x looser than
+    # `quadric_quadric_crossings`'s own dedup tolerance, so what's really
+    # one tangency point was reported as several near-duplicates).
+    # A few Newton steps on the cubic itself (exact coefficients already
+    # in hand, no extra `det` calls needed) tighten each root back near
+    # machine precision.
+    f(t) = c0 + t * (c1 + t * (c2 + t * c3))
+    fp(t) = c1 + t * (2 * c2 + t * 3 * c3)
+    function newton_polish(t0)
+        t = t0
+        for _ in 1:8
+            d = fp(t)
+            abs(d) < 1e-300 && break
+            dt = f(t) / d
+            t -= dt
+            abs(dt) < 1e-14 * max(1.0, abs(t)) && break
+        end
+        return t
+    end
+    return newton_polish.(raw)
 end
 
 """
@@ -178,9 +203,55 @@ function quadric_quadric_crossings(curve::Quadric{2,Float64}, edge_curve::Quadri
             return line_meets_quadric(x0, t̂, edge_curve, p1, p2; strict=strict)
         end
     end
+    # Every real pencil root's own degenerate line pair recovers the same
+    # true common roots (that's the pencil method's whole premise: a true
+    # common root of `curve`,`edge_curve` lies on *every* member of the
+    # pencil, degenerate ones included) -- so with 3 real pencil roots and
+    # up to 2 points per factored line, the same handful of true crossings
+    # can surface several times over, each copy differing only by
+    # accumulated floating-point error through `pencil_real_roots` and
+    # `degenerate_conic_lines`. For a well-conditioned pencil this error is
+    # tiny, but for a near-tangent `curve`/`edge_curve` pair it can be
+    # large -- confirmed via a genuine repro where two points nominally
+    # ~1e-3 apart (relative) turned out to be noisy copies of the *same*
+    # true crossing, an amount that varied by orders of magnitude between
+    # two runs differing only in floating-point noise several digits
+    # deeper than that, meaning no single fixed merge tolerance is safe
+    # here: too tight leaves duplicates unmerged (silently exceeding the
+    # Bezout bound of 4 downstream), too loose risks merging two genuinely
+    # distinct nearby crossings elsewhere. Snapping each raw candidate onto
+    # the *exact* intersection first (plain 2D Newton on the real
+    # constraint pair `evaluate(curve,x)=0`, `evaluate(edge_curve,x)=0` --
+    # both candidates are already close enough to converge to the true
+    # root, not some other one) sidesteps the tolerance question entirely:
+    # noisy copies of the same root converge to the same point regardless
+    # of how far apart they started, so a tight merge tolerance afterward
+    # is exact again, not a guess.
+    function refine(x0)
+        x = x0
+        for _ in 1:20
+            r1, r2 = evaluate(curve, x), evaluate(edge_curve, x)
+            (abs(r1) < 1e-14 && abs(r2) < 1e-14) && break
+            g1, g2 = 2 * (curve.M * x + curve.b), 2 * (edge_curve.M * x + edge_curve.b)
+            J = SMatrix{2,2,Float64}(g1[1], g2[1], g1[2], g2[2])
+            abs(det(J)) < 1e-20 && break
+            x = x - (J \ SVector(r1, r2))
+        end
+        return x
+    end
+    # Even after refining onto the exact curve, a near-tangency leaves
+    # genuine positional slop: right where `curve`,`edge_curve` are nearly
+    # tangent is exactly where their gradients go nearly parallel, so `J`
+    # is nearly singular there -- Newton's own residual converges to ~0
+    # fine, but the *position* it lands on is only pinned down to roughly
+    # 1/(condition number) precision, not full machine precision (confirmed
+    # via a genuine repro: residuals ~1e-13 after refinement, but the same
+    # true root still resolved ~1e-6-relative apart from its own
+    # near-duplicate copy). 1e-5 clears that with margin.
     dedup(pts) = let out = Pt{2,Float64}[]
-        for p in pts
-            any(q -> norm(p - q) < 1e-9 * max(1.0, norm(p)), out) || push!(out, p)
+        for p0 in pts
+            p = refine(p0)
+            any(q -> norm(p - q) < 1e-5 * max(1.0, norm(p)), out) || push!(out, p)
         end
         out
     end
