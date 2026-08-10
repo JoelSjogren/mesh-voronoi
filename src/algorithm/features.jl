@@ -56,3 +56,19 @@ Lets point and segment sub-simplices be handled through the same
 `GFeature` machinery.
 """
 point_feature(p::Pt{N,Float64}, idx::VertexIdx) where {N} = GFeature{N}(AffineQuadratic(p), HalfSpace{N,Float64}[], Set([idx]))
+
+"""
+The single feature of an unbounded affine line through `pa` (vertex
+`idxa`) and `pb` (vertex `idxb`): the same supporting-line quadratic as a
+segment's own `interior` feature, but with `validity` empty (valid
+everywhere) instead of clamped to the strip between the two points -- so
+there is no `beyond_a`/`beyond_b` split and no endpoint validity-cut
+plane. `face = Set([idxa, idxb])`, matching `segment_features`'s
+`interior.face`, so a line and a segment sharing the same two vertex
+indices label identically wherever they'd agree.
+"""
+function line_features(pa::Pt{N,Float64}, pb::Pt{N,Float64}, idxa::VertexIdx, idxb::VertexIdx) where {N}
+    d = pb - pa
+    t̂ = d / norm(d)
+    return [GFeature{N}(AffineQuadratic{N,1,Float64}(pa, SMatrix{N,1,Float64}(t̂)), HalfSpace{N,Float64}[], Set([idxa, idxb]))]
+end

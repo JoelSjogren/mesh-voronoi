@@ -35,7 +35,7 @@ export padded_bbox, two_points_complex, brute_force_label_two_points
 export insert_point!, points_complex, compactified_points_complex, brute_force_label_points
 export weld_near_duplicate_vertices!, weld_duplicate_edges!, fix_boundary_labels!, recompute_point_label, recompute_feature_label
 export HalfSpace, is_valid
-export GFeature, segment_features, point_feature
+export GFeature, segment_features, point_feature, line_features
 export insert_segment!, point_segment_complex, brute_force_label_segments
 export insert_own_lines!, insert_features!, insert_entry!, entry_feats, multi_complex, brute_force_label_multi, top_cell_ids, interior_sample
 export merge_adjacent_same_label_cells!, cell_bbox, boxes_touch_or_overlap, assert_label_bbox_invariant

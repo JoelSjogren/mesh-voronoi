@@ -331,23 +331,50 @@ function interior_sample(cx::CellComplex{2}, id::Int)
 end
 
 """
-Label every live `(N-1)`-dimensional boundary cell with the union of
-whichever top cells reference it -- needed after a first sub-simplex's
-own regions are established purely by sampling (`is_valid`): the top
-cells get labeled directly, but the boundary between two differently-
-labeled neighbors is just as genuine a tie and would otherwise never get
+Label every live boundary cell, at every dimension below `N`, with the
+union of whichever next-dimension-up cells reference it -- needed after a
+first sub-simplex's own regions are established purely by sampling
+(`is_valid`): the top cells get labeled directly, but a boundary between
+two differently-labeled neighbors (down to a single *vertex* where several
+regions meet) is just as genuine a tie and would otherwise never get
 recorded, silently defeating any later code that checks an existing label
 instead of re-deriving the tie numerically.
+
+Propagates one dimension at a time, `N-1` down to `0`: each pass only
+reads dimension-`d+1` labels, which the *previous* pass already made
+correct, so by the time dimension `0` (vertices) is reached, every live
+vertex's label is the union of every live edge incident to it, which is
+itself already the union of every live cell touching that edge -- the
+same "true tied-winner set" a genuinely multi-entry construction would
+otherwise only ever get from `clip_by_hyperplane!`'s own per-vertex
+`exact_sign`/`symbolic_tiebreak` logic.
+
+Originally only handled `dim == N-1` (edges in 2D): correct whenever a
+first entry's own `insert_own_lines!` pass makes at least one real cut,
+since a newly-created vertex from that cut gets its own label from
+`weld_near_duplicate_vertices!`'s `recompute_feature_label` callback
+instead. But a first entry whose every feature has *empty* validity (a
+lone point, or a lone unbounded `:line` -- nothing to compare against, so
+`insert_own_lines!` is a documented no-op, splitting nothing) leaves the
+domain as a single top cell, and the domain's own pre-existing boundary
+vertices (from `init_bbox_complex`, predating this entry) never get
+touched by *anything* -- confirmed as a real, previously-unknown bug via
+a bare single-point/-line stress check, not a hypothetical: every one of
+a padded bbox's own 4 corners stayed at their pristine empty `Label()`
+forever, since nothing else in the construction ever revisits them for a
+domain with only one entry, ever.
 """
 function label_boundaries!(cx::CellComplex{N}) where {N}
-    for id in eachindex(cx.nodes)
-        haskey(cx.superseded_by, id) && continue
-        node = cx.nodes[id]
-        node.dim == N - 1 || continue
-        parents = [p for p in get(cx.referenced_by, id, Int[])
-                   if !haskey(cx.superseded_by, p) && cx.nodes[p].dim == N && !isempty(cx.nodes[p].label)]
-        isempty(parents) && continue
-        set_label!(cx, id, reduce(∪, (cx.nodes[p].label for p in parents); init=node.label))
+    for dim in (N-1):-1:0
+        for id in eachindex(cx.nodes)
+            haskey(cx.superseded_by, id) && continue
+            node = cx.nodes[id]
+            node.dim == dim || continue
+            parents = [p for p in get(cx.referenced_by, id, Int[])
+                       if !haskey(cx.superseded_by, p) && cx.nodes[p].dim == dim + 1 && !isempty(cx.nodes[p].label)]
+            isempty(parents) && continue
+            set_label!(cx, id, reduce(∪, (cx.nodes[p].label for p in parents); init=node.label))
+        end
     end
     return nothing
 end
@@ -711,16 +738,22 @@ end
 
 """
 The features of one `multi_complex`/interactive-demo entry -- `(:point, p,
-idx)` or `(:segment, pa, pb, idxa, idxb)` -- as a `Vector{GFeature{N}}`,
-ready for `insert_entry!`.
+idx)`, `(:segment, pa, pb, idxa, idxb)`, or `(:line, pa, pb, idxa, idxb)`
+(the same shape as `:segment`, but the unbounded affine line through the
+two points instead of the bounded segment between them -- see
+`line_features`) -- as a `Vector{GFeature{N}}`, ready for `insert_entry!`.
 """
-entry_feats(e, ::Val{N}) where {N} = e[1] === :point ? GFeature{N}[point_feature(e[2], e[3])] : segment_features(e[2], e[3], e[4], e[5])
+function entry_feats(e, ::Val{N}) where {N}
+    e[1] === :point && return GFeature{N}[point_feature(e[2], e[3])]
+    e[1] === :line && return line_features(e[2], e[3], e[4], e[5])
+    return segment_features(e[2], e[3], e[4], e[5])
+end
 
 """
-General incremental multi-sub-simplex construction, mixing points and
-segments freely: `entries` is a list of `(:point, p, idx)` or
-`(:segment, pa, pb, idxa, idxb)` tuples, processed in order via
-`insert_entry!`. Returns `(cx, feats)`.
+General incremental multi-sub-simplex construction, mixing points,
+segments, and unbounded lines freely: `entries` is a list of `(:point, p,
+idx)`, `(:segment, pa, pb, idxa, idxb)`, or `(:line, pa, pb, idxa, idxb)`
+tuples, processed in order via `insert_entry!`. Returns `(cx, feats)`.
 """
 function multi_complex(entries::Vector, ::Val{N}; pad=0.3) where {N}
     allpts = Pt{N,Float64}[]
@@ -737,13 +770,24 @@ function multi_complex(entries::Vector, ::Val{N}; pad=0.3) where {N}
     return cx, feats
 end
 
-"""Brute-force oracle matching `multi_complex`'s `entries` format, generalizing `brute_force_label_segments` to a mix of points and segments."""
+"""Brute-force oracle matching `multi_complex`'s `entries` format, generalizing `brute_force_label_segments` to a mix of points, segments, and unbounded lines."""
 function brute_force_label_multi(entries::Vector, x::Pt{N,Float64}; atol=1e-9) where {N}
     ds = Dict{Set{Int},Float64}()
     for e in entries
         if e[1] === :point
             _, p, idx = e
             ds[Set([idx])] = sum(abs2, x - p)
+        elseif e[1] === :line
+            _, pa, pb, idxa, idxb = e
+            t̂ = (pb - pa) / norm(pb - pa)
+            # Squared distance from `x` to the *unbounded* line through
+            # `pa`,`pb` -- |x-pa|^2 minus the squared component along t̂,
+            # i.e. the squared perpendicular residual. Deliberately not
+            # `n̂ = SVector(-t̂[2],t̂[1])` (the `:segment` interior branch's
+            # own shortcut below): that construction only spans the
+            # orthogonal complement of a line in 2D, whereas this formula
+            # is `N`-generic (matters once a 3D line oracle is needed).
+            ds[Set([idxa, idxb])] = sum(abs2, x - pa) - dot(t̂, x - pa)^2
         else
             _, pa, pb, idxa, idxb = e
             t̂ = (pb - pa) / norm(pb - pa)

@@ -34,6 +34,13 @@
 #   - Left-click-drag from one spot to another: add a segment between them
 #     (each end snaps to an existing vertex if you land close to one).
 #   - Right-click: clear the canvas and start over.
+#   - Middle-click a segment: toggle it between a bounded segment (drawn
+#     solid black, clamped to its own two endpoints) and an unbounded
+#     affine line through the same two points (drawn as a semitransparent
+#     blue stroke reaching the edge of the current view) -- same two
+#     endpoints/vertex indices either way, only how it's interpreted
+#     changes. Middle-clicking a point does nothing (a point's own feature
+#     is already unbounded/valid-everywhere; there's nothing to toggle).
 #   - Scroll: zoom in/out, centered on the cursor.
 #   - A small semitransparent box follows the cursor; the output cell it's
 #     in gets a white tint, and the specific input point/segment currently
@@ -73,7 +80,11 @@
 #     drawing, same as R/L below) whenever the input's own true convex hull
 #     actually changes -- exactly recomputed and compared, not guessed at
 #     via a margin, so a new point becoming a hull vertex is never missed.
-#     The region strictly outside this boundary fades to white -- it's the
+#     The region strictly outside this boundary is shown as a constantly
+#     grayed-out (whitened) version of whatever color it would otherwise
+#     be -- not a fade that grows with distance, so the underlying
+#     structure out there stays visible however far you look, just
+#     uniformly desaturated to read as "outside" at a glance. It's the
 #     dual, in the "one-point compactification" sense, of the single new
 #     point that construction adds: not any particular input feature's
 #     territory stretched further out, so it isn't colored like one, and
@@ -106,7 +117,7 @@ const HULL_MAX_EXTENT = 3 * (CANVAS_HI - CANVAS_LO)   # if the input's own conve
 const SNAP_RADIUS = 0.4   # data units: both "close enough to reuse a vertex" and "close enough that a drag counts as a click"
 const MAX_FEATURES = 256
 const MAX_BOUNDARY = 32   # cap on the compactified boundary's own vertex count the shader/uniform upload can carry -- generous for a click-driven convex hull; a hull with more vertices than this just silently stops fading past the first MAX_BOUNDARY edges, no error.
-const BOUNDARY_FADE_DISTANCE = 2.0   # world units past the compactified boundary over which the diagram's own color fades fully to white -- see the "region outside the compactification is the dual of the point at infinity" note near `point_outside_boundary`.
+const BOUNDARY_OUTSIDE_BLEND = 0.5   # fraction (0=no change, 1=pure white) blended into every pixel's color once strictly outside the compactified boundary -- constant regardless of how far outside, not a fade that grows with distance. See the "region outside the compactification is the dual of the point at infinity" note near `point_outside_boundary`.
 const WINDOW_SIZE = 900
 const POINT_SIZE_FRACTION = 0.0056   # of framebuffer width, e.g. ~5px at WINDOW_SIZE=900
 const LINE_WIDTH_FRACTION = 0.0052   # of framebuffer width, e.g. ~5px at WINDOW_SIZE=900 -- almost as thick as the point marker, still visibly under it
@@ -210,15 +221,16 @@ uniform vec3 uColor[MAX_FEATURES];
 // `dot(n_i,x) <= d_i` for every `i`) -- the same halfplane representation
 // `point_on_boundary`/`offsets_equal` already use on the CPU side, moved
 // here so the fade below can run per pixel. `uBoundaryCount == 0` means
-// there is no compactified domain at all yet (fewer than 3 vertices
-// drawn, or they're collinear) -- the "compactification of the empty set
-// is the empty set" case, where *everything* on screen counts as outside
-// it (see `point_outside_boundary`'s own docstring for the CPU-side
-// counterpart of this same rule).
+// there is no hull-offset polygon yet (fewer than 3 vertices drawn, or
+// they're collinear) -- the demo falls back to a plain finite bounding
+// box in that case (`init_bbox_complex`), which is a genuine, fully
+// finite domain filling the whole canvas, not an infinitely-truncated
+// one, so *nothing* counts as outside it (see `point_outside_boundary`'s
+// own docstring for the CPU-side counterpart of this same rule).
 uniform int uBoundaryCount;
 uniform vec2 uBoundaryN[MAX_BOUNDARY];
 uniform float uBoundaryD[MAX_BOUNDARY];
-uniform float uFadeDistance;
+uniform float uOutsideBlend;
 
 // Hover highlighting is computed right here, per pixel, against the same
 // feature list the diagram itself is drawn from -- deliberately *not* by
@@ -316,16 +328,17 @@ bool in_hover_bound(vec2 x) {
 }
 
 // How far `x` sits outside the compactified boundary, in world units --
-// <= 0 means inside (or on) it. `uBoundaryCount == 0` (no compactified
-// domain exists yet) reports every point as maximally outside, since the
-// compactification of the empty set is itself empty: there is no bounded
-// region *to* be inside. Otherwise this is the largest of the boundary's
-// own per-halfplane violations (`dot(n_i,x) - d_i`) -- an approximation
-// of the true Euclidean distance to the convex boundary near a corner
-// (same character as the `feature_dist`/gradient estimate above), which
-// is all a smooth visual fade needs.
+// <= 0 means inside (or on) it. `uBoundaryCount == 0` (no hull-offset
+// polygon exists yet) reports every point as inside, since the demo falls
+// back to a plain finite bounding box in that case -- a real, fully
+// finite domain filling the whole canvas, not a truncated one. Otherwise
+// this is the largest of the boundary's own per-halfplane violations
+// (`dot(n_i,x) - d_i`) -- an approximation of the true Euclidean distance
+// to the convex boundary near a corner (same character as the
+// `feature_dist`/gradient estimate above), which is all a smooth visual
+// fade needs.
 float boundary_violation(vec2 x) {
-    if (uBoundaryCount == 0) return 1e30;
+    if (uBoundaryCount == 0) return -1e30;
     float v = -1e30;
     for (int i = 0; i < MAX_BOUNDARY; i++) {
         if (i >= uBoundaryCount) break;
@@ -417,11 +430,14 @@ void main() {
     // The region outside the compactified boundary is the dual of the
     // "point at infinity" added by one-point compactification -- not any
     // particular input feature's territory stretched further out, so it
-    // isn't colored like one. Faded to white over `uFadeDistance` rather
-    // than a hard cutoff, so the boundary itself (already drawn as its own
-    // outline overlay) reads as a soft edge, not a jarring one.
-    float fade = clamp(boundary_violation(x) / uFadeDistance, 0.0, 1.0);
-    base = mix(base, vec3(1.0, 1.0, 1.0), fade);
+    // isn't colored like one. Shown as a constantly grayed-out (whitened)
+    // version of its own normal color instead of a fade that grows with
+    // distance -- the underlying structure stays visible arbitrarily far
+    // out, just uniformly desaturated by a fixed amount (`uOutsideBlend`)
+    // so it reads as "outside" at a glance.
+    if (boundary_violation(x) > 0.0) {
+        base = mix(base, vec3(1.0, 1.0, 1.0), uOutsideBlend);
+    }
 
     fragment_color = vec4(base, 1.0);
 }
@@ -654,9 +670,9 @@ docstring). Mirrors `point_on_boundary`'s halfplane construction exactly,
 so the shader's notion of "inside" can never disagree with the CPU-side
 one used for hover/rebuild decisions.
 """
-function set_boundary_uniforms!(prog, offset::Union{Nothing,Vector{Pt{2,Float64}}}, fade_distance::Float64)
+function set_boundary_uniforms!(prog, offset::Union{Nothing,Vector{Pt{2,Float64}}}, outside_blend::Float64)
     loc(name) = glGetUniformLocation(prog, name)
-    glUniform1f(loc("uFadeDistance"), Float32(fade_distance))
+    glUniform1f(loc("uOutsideBlend"), Float32(outside_blend))
     if offset === nothing
         glUniform1i(loc("uBoundaryCount"), Int32(0))
         return
@@ -872,6 +888,39 @@ function nearest_vertex(coords, pos)
     return best_d < SNAP_RADIUS ? best_i : nothing
 end
 
+"""
+`nearest_vertex`'s own counterpart one level up: the index into `entries`
+of whichever point/segment/line lies closest to `pos`, used by
+`toggle_nearest_entry!` to pick which element a middle-click is toggling.
+A point's own distance is exact; a segment's is the *clamped* perpendicular
+distance to its own chord (matching what's actually drawn on screen); a
+line's is *unclamped* -- the true perpendicular distance to the infinite
+line through its own two defining points, not restricted to the
+`[pa,pb]` stretch -- so a middle-click far along an already-toggled
+line's own drawn stroke can still re-pick it, matching "this represents
+something unbounded" rather than only being pickable near its own two
+original endpoints.
+"""
+function nearest_entry(entries, pos)
+    isempty(entries) && return nothing
+    best_i, best_d = 0, Inf
+    for (i, e) in enumerate(entries)
+        d = if e[1] === :point
+            norm(e[2] - pos)
+        else
+            pa, pb = e[2], e[3]
+            dir = pb - pa
+            t = dot(pos - pa, dir) / dot(dir, dir)
+            tc = e[1] === :line ? t : clamp(t, 0.0, 1.0)
+            norm(pos - (pa + tc * dir))
+        end
+        if d < best_d
+            best_i, best_d = i, d
+        end
+    end
+    return best_d < SNAP_RADIUS ? best_i : nothing
+end
+
 # Hover query: works directly off the flat feature list, exactly the way
 # the shader itself decides a winner per pixel -- the cell complex (`cx`)
 # only exists to *build* this list correctly, not to answer point queries.
@@ -967,7 +1016,13 @@ exactly the shape of bug this session's construction issues have taken.
 """
 function subcell_mindist(cx::CellComplex{2}, feats::Vector{GFeature{2}}, kind::Symbol, id::Int)
     face = first(cx.nodes[id].label)
-    f = only(ff for ff in feats if ff.face == face)
+    # More than one feature can carry the same `face`: two different
+    # segments that share an endpoint (welded to the same vertex index,
+    # e.g. the `house` preset's connected polygon boundary) each contribute
+    # their own "beyond this endpoint" point feature with `face =
+    # Set([shared_idx])`. They describe the same physical point, so any
+    # match is an equally valid representative for a mindist computation.
+    f = first(ff for ff in feats if ff.face == face)
     if kind == :vertex
         return sqrt(max(0.0, sqdist(f.quad, cx.nodes[id].point)))
     end
@@ -1086,7 +1141,7 @@ const BUILTIN_PRESETS = [
     "benchmark" => BENCHMARK_PRESET,
 ]
 
-entries_to_preset(entries) = [e[1] === :point ? (:point, e[2]) : (:segment, e[2], e[3]) for e in entries]
+entries_to_preset(entries) = [e[1] === :point ? (:point, e[2]) : e[1] === :line ? (:line, e[2], e[3]) : (:segment, e[2], e[3]) for e in entries]
 
 """
 Append `name => preset` to `PRESETS_FILE` in a small line-based text format
@@ -1095,6 +1150,7 @@ Append `name => preset` to `PRESETS_FILE` in a small line-based text format
     ### name
     point x y
     segment x1 y1 x2 y2
+    line x1 y1 x2 y2
     ...
 
 Saving the same name twice just appends a second block; `load_presets_file`
@@ -1108,6 +1164,9 @@ function save_preset(name::AbstractString, preset)
             if e[1] === :point
                 p = e[2]
                 println(io, "point ", p[1], " ", p[2])
+            elseif e[1] === :line
+                pa, pb = e[2], e[3]
+                println(io, "line ", pa[1], " ", pa[2], " ", pb[1], " ", pb[2])
             else
                 pa, pb = e[2], e[3]
                 println(io, "segment ", pa[1], " ", pa[2], " ", pb[1], " ", pb[2])
@@ -1132,6 +1191,11 @@ function load_presets_file()
         elseif startswith(line, "point ")
             parts = split(line)
             push!(current, (:point, SVector(parse(Float64, parts[2]), parse(Float64, parts[3]))))
+        elseif startswith(line, "line ")
+            parts = split(line)
+            push!(current, (:line,
+                SVector(parse(Float64, parts[2]), parse(Float64, parts[3])),
+                SVector(parse(Float64, parts[4]), parse(Float64, parts[5]))))
         elseif startswith(line, "segment ")
             parts = split(line)
             push!(current, (:segment,
@@ -1158,16 +1222,18 @@ end
 
 """
 The domain complex to build against for the current vertex set `coords`: a
-hull-offset polygon around `coords` if one both exists (needs >= 3
-affinely independent points) and stays within `HULL_MAX_EXTENT` of the
-canvas: `nothing` as the second return value otherwise, meaning "fell back
-to the plain bbox" (too few points yet, points exactly collinear, or a
-point cloud deliberately scattered far outside the canvas like the
-`benchmark` preset). The second return value (the offset polygon's own
-vertices, or `nothing`) is what a caller keeps around both to draw the
-boundary and to later tell (`offsets_equal`) whether it's gone stale.
+hull-offset polygon around `coords`, pushed outward by `offset_dist`
+(`HULL_OFFSET_DISTANCE` by default -- pass a larger value to grow it, see
+`build_domain`), if one both exists (needs >= 3 affinely independent
+points) and stays within `HULL_MAX_EXTENT` of the canvas: `nothing` as the
+second return value otherwise, meaning "fell back to the plain bbox" (too
+few points yet, points exactly collinear, or a point cloud deliberately
+scattered far outside the canvas like the `benchmark` preset). The second
+return value (the offset polygon's own vertices, or `nothing`) is what a
+caller keeps around both to draw the boundary and to later tell
+(`offsets_equal`) whether it's gone stale.
 """
-function fresh_domain(coords::Vector{SVector{2,Float64}}, lo0, hi0)
+function fresh_domain(coords::Vector{SVector{2,Float64}}, lo0, hi0, offset_dist::Float64=HULL_OFFSET_DISTANCE)
     if length(coords) >= 3
         hull = try
             convex_hull_2d(coords)
@@ -1178,12 +1244,194 @@ function fresh_domain(coords::Vector{SVector{2,Float64}}, lo0, hi0)
             hlo = SVector(minimum(p[1] for p in hull), minimum(p[2] for p in hull))
             hhi = SVector(maximum(p[1] for p in hull), maximum(p[2] for p in hull))
             if maximum(hhi - hlo) <= HULL_MAX_EXTENT
-                offset = offset_polygon(hull, HULL_OFFSET_DISTANCE)
+                offset = offset_polygon(hull, offset_dist)
                 return init_hull_offset_complex(offset)[1], offset
             end
         end
     end
     return init_bbox_complex(Val(2), lo0, hi0)[1], nothing
+end
+
+# How many times `build_domain` will double `offset_dist` before giving up
+# and using whatever it last built, even if still (heuristically) flagged
+# as saturated -- caps runaway growth for a pathological configuration
+# rather than looping toward `HULL_MAX_EXTENT` and beyond on every add.
+const MAX_BOUNDARY_GROWTH_STEPS = 6
+
+"""
+The `(point, label)` of every live, genuinely-tied (`!isempty(label)`)
+vertex of `cx` that falls within the fixed box `[lo,hi]` -- used by
+`build_domain` to tell whether growing the compactified boundary further
+actually changes anything *inside* a region every candidate domain size
+already comfortably contains, without needing to separately classify
+which labels are "real" ties versus boundary-`<Vi,∞>`-style ones
+(sidestepped entirely: a fixed inner window well away from *any* growth
+attempt's own boundary can't contain an infinity-flavored vertex from any
+of them, so there's nothing to tell apart).
+"""
+function inner_vertex_signature(cx::CellComplex{2}, lo::Pt{2,Float64}, hi::Pt{2,Float64})
+    sig = Tuple{Pt{2,Float64},Label}[]
+    for (id, node) in enumerate(cx.nodes)
+        haskey(cx.superseded_by, id) && continue
+        node.dim == 0 || continue
+        isempty(node.label) && continue
+        p = node.point
+        (all(lo .- 1e-6 .<= p) && all(p .<= hi .+ 1e-6)) || continue
+        push!(sig, (p, node.label))
+    end
+    return sig
+end
+
+"""
+Whether `sig1`/`sig2` (each an `inner_vertex_signature`) represent the
+*same* set of tied vertices, within a small position tolerance -- NOT
+exact equality, deliberately: two builds of the same conceptual vertex
+from a genuinely different clip sequence (a different-sized boundary
+changes which edges get cut in which order) routinely land a handful of
+ULPs to a few `1e-7`-ish apart, not bit-identical (confirmed directly: a
+raw exact-`Set`-equality version of this check found dozens of pairs like
+`[3.0, -2.999999932565042]` vs `[3.0, -3.0]`, same label, same vertex,
+just computed via a different path -- a false positive that made
+`build_domain` grow the well-behaved built-in `house` preset to its
+growth cap for no real reason, every single time).
+"""
+function signatures_match(sig1, sig2; tol=1e-6)
+    length(sig1) == length(sig2) || return false
+    used = falses(length(sig2))
+    for (p1, l1) in sig1
+        found = false
+        for (j, (p2, l2)) in enumerate(sig2)
+            used[j] && continue
+            if l1 == l2 && norm(p1 - p2) < tol
+                used[j] = true
+                found = true
+                break
+            end
+        end
+        found || return false
+    end
+    return true
+end
+
+"""
+Builds a fresh domain and construction for `entries` from scratch,
+adaptively growing the compactified boundary's own offset distance
+(`fresh_domain`'s `offset_dist`, starting from `HULL_OFFSET_DISTANCE`,
+doubling up to `MAX_BOUNDARY_GROWTH_STEPS` times) whenever growing further
+still changes the constructed complex's own genuinely-tied vertices
+inside a window comfortably inside the smaller attempt's own boundary
+(`inner_vertex_signature`, window scaled to that attempt's own
+`offset_dist` -- see the loop body) -- a direct, empirical "does more
+room actually reveal new structure" test, not a local geometric guess.
+Returns `(cx, feats, offset)`, mirroring
+`fresh_domain`'s own `(cx, offset)` shape plus the now fully-populated
+`feats`.
+
+A fixed offset distance can genuinely truncate real structure, not just
+"make it require scrolling to see": confirmed via a real repro (the
+`toosmall` preset) where a real 3-way tie point -- where a point's own
+parabolic bisector against a segment first meets a third feature's own
+territory -- sat measurably beyond the old fixed 2-unit offset, so that
+vertex was never constructed at all (not merely clipped/hidden --
+genuinely absent from `cx`).
+
+An earlier version of this function tried to detect the same thing via a
+local geometric heuristic (sampling points along the boundary, looking
+for two features close to tying there, or converging toward a tie just
+beyond it) -- discarded after a false-positive check against the built-in
+`house` preset: near-ties *right at* a hull-offset boundary turn out to
+be the ordinary, expected case (every boundary edge sits close to where
+two *adjacent* hull vertices' own bisector naturally crosses it), not a
+sign of anything cut off, so that heuristic grew `house`'s own domain to
+its cap for no real reason every single time. The "did anything actually
+change inside a fixed inner region" test used here doesn't have that
+failure mode: it only ever answers the literal question being asked.
+
+Lets an exception from `insert_entry!` propagate uncaught (matching
+`load_preset!`'s own reliance on its caller for error handling, rather
+than adding a second, differently-scoped rollback layer here) -- a
+genuine construction failure on well-formed input is a separate bug this
+growth loop isn't positioned to paper over.
+"""
+function build_domain(entries, lo0, hi0)
+    all_coords = SVector{2,Float64}[]
+    for e in entries
+        e[1] === :point ? push!(all_coords, e[2]) : push!(all_coords, e[2], e[3])
+    end
+    offset_dist = HULL_OFFSET_DISTANCE
+    cx, offset = fresh_domain(all_coords, lo0, hi0, offset_dist)
+    feats = GFeature{2}[]
+    for e in entries
+        insert_entry!(cx, feats, entry_feats(e, Val(2)))
+    end
+    offset === nothing && return cx, feats, offset
+
+    for _ in 1:MAX_BOUNDARY_GROWTH_STEPS
+        # Comparison window: comfortably inside *this* (the smaller,
+        # about-to-be-doubled) attempt's own hull-offset boundary -- half
+        # of its own margin, so this attempt and the next can't disagree
+        # about a vertex purely because it briefly sat in one attempt's own
+        # boundary margin but not the other's. Deliberately tied to the
+        # *current offset's own* extent rather than a fixed box around the
+        # raw input: a fixed small window can never observe a tie point
+        # that only exists once the domain has grown far beyond the input's
+        # own bbox (confirmed as a real regression -- the `toosmall` repro's
+        # target vertex sits well outside the input points' own bbox, so a
+        # window fixed to that bbox stayed "stable" long before the domain
+        # was actually big enough, and growth stopped too early). Scaling
+        # the window with `offset_dist` itself means it keeps growing right
+        # alongside the domain, so distant structure eventually falls
+        # inside some later iteration's own window.
+        wlo = SVector(minimum(p[1] for p in offset), minimum(p[2] for p in offset)) .+ offset_dist / 2
+        whi = SVector(maximum(p[1] for p in offset), maximum(p[2] for p in offset)) .- offset_dist / 2
+        prev_sig = inner_vertex_signature(cx, wlo, whi)
+
+        offset_dist *= 2
+        cx2, offset2 = fresh_domain(all_coords, lo0, hi0, offset_dist)
+        offset2 === nothing && break   # hit HULL_MAX_EXTENT growing -- stop, use the last good attempt
+        feats2 = GFeature{2}[]
+        for e in entries
+            insert_entry!(cx2, feats2, entry_feats(e, Val(2)))
+        end
+        sig2 = inner_vertex_signature(cx2, wlo, whi)
+        cx, feats, offset = cx2, feats2, offset2
+        signatures_match(sig2, prev_sig) && break
+    end
+    return cx, feats, offset
+end
+
+"""
+Where the infinite line through `pa`,`pb` enters and exits the
+axis-aligned box `[lo,hi]` -- used to draw a `:line` entry's own
+on-screen stroke reaching the current view's edges. Recomputed fresh every
+frame from the *live* view bounds (not cached at `rebuild!` time against a
+fixed canvas box), so the stroke keeps reaching the screen edge at any
+zoom level rather than visibly terminating once the view zooms in past
+whatever box it was last clipped to.
+
+Parametrizes `x(t) = pa + t*d` (`d = pb-pa`) and intersects against each
+of the 4 slab constraints `lo[k] <= x(t)[k] <= hi[k]`, keeping the
+tightest surviving `[tlo,thi]` range -- a standard box-clip of an
+*infinite* line, simpler than a segment/ray clip (e.g. Cohen-Sutherland)
+since there's no "outside" endpoint to reject, only a `t`-interval to
+narrow. `nothing` if the line misses the box entirely (degenerate
+zero-length `pa==pb`, or a parallel line strictly outside one slab).
+"""
+function clip_line_to_box(pa::SVector{2,Float64}, pb::SVector{2,Float64}, lo, hi)
+    d = pb - pa
+    norm(d) < 1e-12 && return nothing   # no well-defined direction to draw
+    tlo, thi = -Inf, Inf
+    for k in 1:2
+        if abs(d[k]) < 1e-12
+            (pa[k] < lo[k] || pa[k] > hi[k]) && return nothing
+        else
+            t1, t2 = (lo[k] - pa[k]) / d[k], (hi[k] - pa[k]) / d[k]
+            t1, t2 = minmax(t1, t2)
+            tlo, thi = max(tlo, t1), min(thi, t2)
+        end
+    end
+    tlo > thi && return nothing
+    return pa + tlo * d, pa + thi * d
 end
 
 """
@@ -1240,10 +1488,12 @@ end
 
 """
 Whether world point `p` lies strictly outside the compactified boundary
-`offset` -- `true` unconditionally when `offset` is `nothing`, since the
-compactification of the empty set (no hull-offset domain exists yet --
-fewer than 3 vertices drawn, or they're collinear) is itself empty: there
-is no bounded region to be inside of at all.
+`offset` -- `false` unconditionally when `offset` is `nothing`, since
+that means no hull-offset polygon exists yet (fewer than 3 vertices
+drawn, or they're collinear) and the demo has fallen back to a plain
+finite bounding box (`init_bbox_complex`) instead: a genuine, fully
+finite domain filling the whole canvas, not an infinitely-truncated one,
+so nothing in it is "outside" anything.
 
 This is the CPU-side counterpart of `boundary_violation` in
 `BG_FRAGMENT_SRC`, used to decide the hover text (`draw_hover_highlights!`
@@ -1255,7 +1505,7 @@ loop, because the two questions ("is `p` *on* an edge" vs. "is `p` outside
 halfplane construction.
 """
 function point_outside_boundary(offset::Union{Nothing,Vector{Pt{2,Float64}}}, p::SVector{2,Float64})
-    offset === nothing && return true
+    offset === nothing && return false
     n = length(offset)
     for i in 1:n
         a, b = offset[i], offset[mod1(i + 1, n)]
@@ -1303,6 +1553,7 @@ function build_app(; visible=true)
     bg_vao = bg_vao_ref[1]
     points_vao, points_vbo = gen_vao_vbo()
     lines_vao, lines_vbo = gen_vao_vbo()
+    unbounded_lines_vao, unbounded_lines_vbo = gen_vao_vbo()
     highlight_vao, highlight_vbo = gen_vao_vbo()
     screen_vao, screen_vbo = gen_text_vao_vbo()
     text_tex = gen_text_texture()
@@ -1409,30 +1660,22 @@ function build_app(; visible=true)
     # here directly -- that would just get overwritten by the caller's own
     # subsequent "Added ..." message before anyone ever saw it).
     function rebuild_domain_if_stale!()
-        new_cx, new_offset = fresh_domain(coords, lo0, hi0)
-        offsets_equal(new_offset, domain_offset[]) && return nothing
-        old_entries = copy(entries)
-        old_cx = cx
-        old_feats = copy(feats)
-        old_offset = domain_offset[]
-        empty!(entries)
-        cx = new_cx
-        empty!(feats)
-        domain_offset[] = new_offset
+        old_cx, old_feats, old_offset = cx, copy(feats), domain_offset[]
         try
-            for e in old_entries
-                step!(e)
-            end
+            new_cx, new_feats, new_offset = build_domain(entries, lo0, hi0)
+            offsets_equal(new_offset, old_offset) && return nothing
+            cx = new_cx
+            empty!(feats)
+            append!(feats, new_feats)
+            domain_offset[] = new_offset
+            return nothing
         catch e
             cx = old_cx
             empty!(feats)
             append!(feats, old_feats)
-            empty!(entries)
-            append!(entries, old_entries)
             domain_offset[] = old_offset
             return "(boundary resize skipped: " * sprint(showerror, e) * ")"
         end
-        return nothing
     end
 
     function commit_point!(pos)
@@ -1490,6 +1733,58 @@ function build_app(; visible=true)
             # See `commit_point!`'s own comment on the same pattern.
             resize!(coords, n0)
             set_status!("Error: " * sprint(showerror, e))
+        end
+    end
+
+    # Toggles the nearest point/segment/line between `:segment` (bounded)
+    # and `:line` (unbounded affine subspace) -- same two vertex indices
+    # and coordinates either way, only the tag symbol changes, so `coords`
+    # itself never needs touching. A no-op on a `:point` entry: a point's
+    # own feature (`point_feature`) already has empty validity, i.e. is
+    # already "unbounded" in the only sense that concept applies to a
+    # 0-dimensional feature -- still gives status feedback so the click
+    # doesn't feel dropped.
+    #
+    # Reuses the exact "snapshot, empty, replay every entry via `step!`,
+    # roll back on any exception" pattern `rebuild_domain_if_stale!` already
+    # uses (same shape, just replaying a *modified* copy of `entries`
+    # instead of an unmodified one) -- correct here because toggling
+    # changes neither vertex count nor `coords`, so it's a strict subset of
+    # what that function already handles safely.
+    function toggle_nearest_entry!(pos)
+        i = nearest_entry(entries, pos)
+        if i === nothing
+            set_status!("Nothing close enough to toggle.")
+            return
+        end
+        e = entries[i]
+        if e[1] === :point
+            set_status!("Point $(e[3]) is already unbounded -- nothing to toggle.")
+            return
+        end
+        new_kind = e[1] === :line ? :segment : :line
+        old_entries = copy(entries)
+        old_cx = cx
+        old_feats = copy(feats)
+        old_offset = domain_offset[]
+        replay = [(j == i ? (new_kind, en[2], en[3], en[4], en[5]) : en) for (j, en) in enumerate(old_entries)]
+        empty!(entries)
+        cx, domain_offset[] = fresh_domain(coords, lo0, hi0)
+        empty!(feats)
+        try
+            for en in replay
+                step!(en)
+            end
+            kind_desc = new_kind === :line ? "an unbounded line" : "a bounded segment"
+            set_status!("Toggled entry $i to $kind_desc.")
+        catch err
+            cx = old_cx
+            empty!(feats)
+            append!(feats, old_feats)
+            empty!(entries)
+            append!(entries, old_entries)
+            domain_offset[] = old_offset
+            set_status!("Toggle failed, reverted: " * sprint(showerror, err))
         end
     end
 
@@ -1551,32 +1846,31 @@ function build_app(; visible=true)
     # adds -- so a preset is built exactly the way a user's own drawing
     # would be, just from a fixed list instead of mouse gestures.
     function load_preset!(preset, label::AbstractString)
-        all_coords = SVector{2,Float64}[]
-        for e in preset
-            if e[1] === :point
-                push!(all_coords, e[2])
-            else
-                push!(all_coords, e[2], e[3])
-            end
-        end
-        empty!(coords)
-        empty!(entries)
-        cx, domain_offset[] = fresh_domain(all_coords, lo0, hi0)
-        empty!(feats)
+        new_coords = SVector{2,Float64}[]
+        new_entries = Any[]
         for e in preset
             if e[1] === :point
                 p = e[2]
-                push!(coords, p)
-                step!((:point, p, length(coords)))
+                push!(new_coords, p)
+                push!(new_entries, (:point, p, length(new_coords)))
             else
                 pa, pb = e[2], e[3]
-                push!(coords, pa)
-                ia = length(coords)
-                push!(coords, pb)
-                ib = length(coords)
-                step!((:segment, pa, pb, ia, ib))
+                push!(new_coords, pa)
+                ia = length(new_coords)
+                push!(new_coords, pb)
+                ib = length(new_coords)
+                push!(new_entries, (e[1], pa, pb, ia, ib))   # e[1] is :line or :segment
             end
         end
+        new_cx, new_feats, new_offset = build_domain(new_entries, lo0, hi0)
+        empty!(coords)
+        append!(coords, new_coords)
+        empty!(entries)
+        append!(entries, new_entries)
+        cx = new_cx
+        empty!(feats)
+        append!(feats, new_feats)
+        domain_offset[] = new_offset
         set_status!("Loaded preset \"$label\".")
     end
 
@@ -1595,12 +1889,14 @@ function build_app(; visible=true)
         # both agree on the identical answer.
         pos = world_pos_from_cursor()
         thickness = EDGE_HOVER_THICKNESS_FRACTION * view_half[]
-        # Strictly outside the compactified boundary (or no boundary exists
-        # at all yet) is the dual of the point at infinity, not a stretched-
-        # out territory belonging to whichever feature is technically
-        # nearest -- so there's no real "cell" out there for the shader to
-        # tint or for the hover text to describe in the usual way; see
-        # `point_outside_boundary`'s own docstring.
+        # Strictly outside the compactified boundary is the dual of the
+        # point at infinity, not a stretched-out territory belonging to
+        # whichever feature is technically nearest -- so there's no real
+        # "cell" out there for the shader to tint or for the hover text to
+        # describe in the usual way. When no hull-offset polygon exists at
+        # all yet (fewer than 3 vertices, or collinear), the demo is on its
+        # plain finite bounding-box fallback instead, which has no "outside"
+        # at all; see `point_outside_boundary`'s own docstring.
         hover_is_infinity = point_outside_boundary(domain_offset[], pos)
         hover_idx = hover_is_infinity ? Int[] : hover_winner_indices(feats, pos, thickness)
         hover_color = length(hover_idx) == 1 ? CELL_HOVER_COLOR : BOUNDARY_HOVER_COLOR
@@ -1634,7 +1930,7 @@ function build_app(; visible=true)
         glUseProgram(bg_prog)
         set_background_uniforms!(bg_prog, bg_feats[], lo, hi)
         set_hover_uniforms!(bg_prog, hover_idx, thickness, hover_color; bound=hover_bound)
-        set_boundary_uniforms!(bg_prog, domain_offset[], BOUNDARY_FADE_DISTANCE)
+        set_boundary_uniforms!(bg_prog, domain_offset[], BOUNDARY_OUTSIDE_BLEND)
         glBindVertexArray(bg_vao)
         glDrawArrays(GL_TRIANGLES, 0, 3)
         glBindVertexArray(0)
@@ -1653,6 +1949,36 @@ function build_app(; visible=true)
         if points_n[] > 0
             glBindVertexArray(points_vao)
             glDrawArrays(GL_POINTS, 0, points_n[])
+            glBindVertexArray(0)
+        end
+
+        # `:line` entries (unbounded affine lines, not clamped to their own
+        # two defining points) get their own stroke, box-clipped fresh
+        # every frame to the *current* view bounds (`clip_line_to_box`, not
+        # `rebuild!`-time canvas bounds) so it keeps reaching the screen
+        # edge at any zoom level. Drawn via `highlight_prog` (the general
+        # "whatever's uploaded, in a uniform color" pass already used for
+        # hover indicators/the compactified boundary below) rather than the
+        # hardcoded-black `overlay_prog` used for bounded segments above, so
+        # a toggled line reads as visually distinct input geometry.
+        uline_pts = Float32[]
+        for e in entries
+            e[1] === :line || continue
+            clipped = clip_line_to_box(e[2], e[3], lo, hi)
+            clipped === nothing && continue
+            a, b = clipped
+            append!(uline_pts, (Float32(a[1]), Float32(a[2]), Float32(b[1]), Float32(b[2])))
+        end
+        if !isempty(uline_pts)
+            glUseProgram(highlight_prog)
+            uloc(name) = glGetUniformLocation(highlight_prog, name)
+            glUniform2f(uloc("uCanvasLo"), Float32(lo[1]), Float32(lo[2]))
+            glUniform2f(uloc("uCanvasHi"), Float32(hi[1]), Float32(hi[2]))
+            glUniform4f(uloc("uColor"), 0.25f0, 0.45f0, 0.95f0, 0.75f0)   # muted blue, semi-transparent -- distinct from the solid black bounded segments/points above
+            glLineWidth(Float32(w * LINE_WIDTH_FRACTION))
+            upload!(unbounded_lines_vao, unbounded_lines_vbo, uline_pts)
+            glBindVertexArray(unbounded_lines_vao)
+            glDrawArrays(GL_LINES, 0, length(uline_pts) ÷ 2)
             glBindVertexArray(0)
         end
 
@@ -1986,7 +2312,7 @@ function build_app(; visible=true)
     end
 
     rebuild!()
-    state = (; coords, entries, commit_point!, commit_segment!, do_clear!, status, hover,
+    state = (; coords, entries, commit_point!, commit_segment!, toggle_nearest_entry!, do_clear!, status, hover,
         do_refine!, do_save_prompt!, do_load_prompt!,
         feats=(() -> feats), draw_frame!, world_pos_from_cursor, window, zoom!,
         view_lo, view_hi, view_center, view_half,
@@ -1995,16 +2321,40 @@ function build_app(; visible=true)
 end
 
 # Runs the interactive event/render loop: polls input each iteration
-# (rather than registering GLFW callbacks), detects left-button
-# press/release edges to distinguish a click (add a point) from a drag (add
-# a segment), and a right-button press to clear. Hover info is shown
-# on-screen only (the shader-tinted cell/boundary plus the hover text box --
-# see `draw_hover_highlights!`), not printed to the terminal.
+# (rather than registering GLFW callbacks) for left/right mouse buttons
+# and keys, detecting left-button press/release edges to distinguish a
+# click (add a point) from a drag (add a segment), and a right-button
+# press to clear. Hover info is shown on-screen only (the shader-tinted
+# cell/boundary plus the hover text box -- see `draw_hover_highlights!`),
+# not printed to the terminal.
+#
+# The middle button is the one exception, and deliberately *not* polled:
+# confirmed via a live diagnostic (every button 1-8's own transitions
+# printed) that `GLFW.GetMouseButton` never observes it as pressed at all
+# on this system, while `GLFW.MOUSE_BUTTON_LEFT`/`_RIGHT` -- read via the
+# exact same polling call -- work fine, and middle-click itself works in
+# every other application on the same machine. That signature matches a
+# known, still-open GLFW/X11 bug (github.com/glfw/glfw/issues/2013): the
+# middle button's own press gets bundled together with its release and
+# delivered as a single internal event-processing burst at release time,
+# inside one `PollEvents()` call -- so by the time anything gets around to
+# *polling* the queriable button state afterward, it has already reverted
+# to "released" and the press is never observed. A registered *callback*
+# (`glfwSetMouseButtonCallback`) doesn't have this problem: it fires
+# synchronously as GLFW processes the event internally, before that
+# state has a chance to revert, so wiring the middle button through a
+# callback instead of polling sidesteps the bug entirely rather than
+# working around its symptom.
 function run!(window, state)
     left_was_down = false
     drag_start = Ref{Union{Nothing,SVector{2,Float64}}}(nothing)
     right_was_down = false
     key_was_down = Dict(GLFW.KEY_R => false, GLFW.KEY_S => false, GLFW.KEY_L => false)
+
+    middle_click_pending = Ref(false)
+    GLFW.SetMouseButtonCallback(window, (_window, button, action, _mods) -> begin
+        button == GLFW.MOUSE_BUTTON_MIDDLE && action == GLFW.PRESS && (middle_click_pending[] = true)
+    end)
 
     while !GLFW.WindowShouldClose(window)
         GLFW.PollEvents()
@@ -2027,6 +2377,11 @@ function run!(window, state)
         right_down = GLFW.GetMouseButton(window, GLFW.MOUSE_BUTTON_RIGHT) == GLFW.PRESS
         right_down && !right_was_down && state.do_clear!()
         right_was_down = right_down
+
+        if middle_click_pending[]
+            middle_click_pending[] = false
+            state.toggle_nearest_entry!(state.world_pos_from_cursor())
+        end
 
         for (key, action) in ((GLFW.KEY_R, state.do_refine!),
             (GLFW.KEY_S, state.do_save_prompt!), (GLFW.KEY_L, state.do_load_prompt!))

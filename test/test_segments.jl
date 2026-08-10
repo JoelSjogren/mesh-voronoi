@@ -483,3 +483,63 @@ end
     @test kind4 === :cell
     @test cx.nodes[id4].dim == 2
 end
+
+@testset "line_features: a lone unbounded line vs. a point" begin
+    pa, pb = SVector(-1.0, 0.0), SVector(1.0, 0.3)
+    p = SVector(0.6, -2.5)
+    entries = [(:line, pa, pb, 1, 2), (:point, p, 3)]
+    cx, feats = multi_complex(entries, Val(2))
+    @test length(feats) == 2   # one line feature + one point feature, no beyond_a/beyond_b split
+
+    lo, hi = padded_bbox([pa, pb, p]; pad=0.3)
+    checked = 0
+    mismatches = 0
+    for x in range(lo[1], hi[1], length=161), y in range(lo[2], hi[2], length=161)
+        pt = SVector(x, y)
+        expected = brute_force_label_multi(entries, pt)
+        length(expected) > 1 && continue
+        got_id = find_containing_cell(cx, pt)
+        got_id === nothing && continue
+        checked += 1
+        cx.nodes[got_id].label != expected && (mismatches += 1)
+    end
+    @test checked > 5000
+    @test mismatches == 0
+end
+
+@testset "line_features: an unbounded line's own winning region extends past its two defining points" begin
+    # The defining property that distinguishes a :line from a :segment: a
+    # point far beyond pb along the line's own direction (well outside the
+    # [pa,pb] strip a :segment's interior would clamp to) still ties to the
+    # line's face, not to some other feature -- confirming validity really
+    # is empty, not silently still bounded.
+    pa, pb = SVector(0.0, 0.0), SVector(1.0, 0.0)
+    p_far = SVector(0.0, 5.0)   # a distant point, well off the line
+    entries = [(:line, pa, pb, 1, 2), (:point, p_far, 3)]
+    cx, feats = multi_complex(entries, Val(2))
+    far_along_line = SVector(20.0, 0.0)   # far beyond pb, still exactly on the line
+    @test recompute_feature_label(far_along_line, feats) == Label([Set([1, 2])])
+end
+
+@testset "line_features: two unbounded lines crossing" begin
+    l1a, l1b = SVector(-2.0, -0.3), SVector(2.0, 0.5)
+    l2a, l2b = SVector(-1.5, 1.8), SVector(1.0, -1.6)
+    entries = [(:line, l1a, l1b, 1, 2), (:line, l2a, l2b, 3, 4)]
+    cx, feats = multi_complex(entries, Val(2))
+    @test length(feats) == 2
+
+    lo, hi = padded_bbox([l1a, l1b, l2a, l2b]; pad=0.3)
+    checked = 0
+    mismatches = 0
+    for x in range(lo[1], hi[1], length=161), y in range(lo[2], hi[2], length=161)
+        pt = SVector(x, y)
+        expected = brute_force_label_multi(entries, pt)
+        length(expected) > 1 && continue
+        got_id = find_containing_cell(cx, pt)
+        got_id === nothing && continue
+        checked += 1
+        cx.nodes[got_id].label != expected && (mismatches += 1)
+    end
+    @test checked > 5000
+    @test mismatches == 0
+end
