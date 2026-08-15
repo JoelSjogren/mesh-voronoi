@@ -79,7 +79,7 @@ function setViewCenterForAnchor(sx, sy, anchor) {
 // (accelerating) via a cubic curve. zoom is interpolated in log-space so the
 // perceived zoom speed stays constant rather than slowing down near the end.
 let cameraAnimId = null;
-function animateCameraTo(targetCenter, targetZoom, durationMs) {
+function animateCameraTo(targetCenter, targetZoom, durationMs, onComplete) {
   if (cameraAnimId != null) cancelAnimationFrame(cameraAnimId);
   const startCenter = { x: viewCenter.x, y: viewCenter.y };
   const startLogZoom = Math.log(zoom);
@@ -94,7 +94,12 @@ function animateCameraTo(targetCenter, targetZoom, durationMs) {
     zoom = Math.exp(startLogZoom + (targetLogZoom - startLogZoom) * e);
     updateCameraFrustum();
     refreshSegmentMesh();
-    cameraAnimId = t < 1 ? requestAnimationFrame(step) : null;
+    if (t < 1) {
+      cameraAnimId = requestAnimationFrame(step);
+    } else {
+      cameraAnimId = null;
+      if (onComplete) onComplete();
+    }
   }
   cameraAnimId = requestAnimationFrame(step);
 }
@@ -289,6 +294,36 @@ const segMat = new THREE.MeshBasicMaterial({ color: 0xff9933, depthTest: false }
 const segMesh = new THREE.Mesh(segGeom, segMat);
 segMesh.renderOrder = 0;
 scene.add(segMesh);
+
+// one-shot red pulse overlaid on a specific failing subedge (see
+// pulseSubedgeHighlight), drawn on top of everything else
+const highlightGeom = new THREE.BufferGeometry();
+const highlightMat = new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0, depthTest: false });
+const highlightMesh = new THREE.Mesh(highlightGeom, highlightMat);
+highlightMesh.renderOrder = 4;
+highlightMesh.visible = false;
+scene.add(highlightMesh);
+
+let highlightAnimId = null;
+function pulseSubedgeHighlight(A, B, durationMs) {
+  if (highlightAnimId != null) cancelAnimationFrame(highlightAnimId);
+  const halfWidth = (SEGMENT_HALF_WIDTH_PX * 2.5) / zoom;
+  setPositionGeometry(highlightMesh, buildSingleQuad(A.x, A.y, B.x, B.y, halfWidth));
+  highlightMesh.visible = true;
+  const startTime = performance.now();
+
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / durationMs);
+    highlightMat.opacity = Math.sin(Math.PI * t); // one pulse: 0 -> 1 -> 0
+    if (t < 1) {
+      highlightAnimId = requestAnimationFrame(step);
+    } else {
+      highlightMesh.visible = false;
+      highlightAnimId = null;
+    }
+  }
+  highlightAnimId = requestAnimationFrame(step);
+}
 
 // live preview while dragging out a new segment
 const previewGeom = new THREE.BufferGeometry();
@@ -712,27 +747,42 @@ function setPointsGeometry(ptsObj, arr) {
   ptsObj.geometry.setAttribute('position', new THREE.BufferAttribute(arr, 3));
 }
 
+// The 4 corners of a halfWidth-thick quad running from (ax,ay) to (bx,by).
+function quadCorners(ax, ay, bx, by, halfWidth) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * halfWidth;
+  const ny = (dx / len) * halfWidth;
+  return [
+    { x: ax + nx, y: ay + ny },
+    { x: bx + nx, y: by + ny },
+    { x: bx - nx, y: by - ny },
+    { x: ax - nx, y: ay - ny },
+  ];
+}
+
 function buildSegmentQuads(halfWidth) {
   const positions = new Float32Array(segments.length * 6 * 3); // 2 triangles per segment
   let pi = 0;
   for (const s of segments) {
-    const dx = s.bx - s.ax;
-    const dy = s.by - s.ay;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = (-dy / len) * halfWidth;
-    const ny = (dx / len) * halfWidth;
-    const p0x = s.ax + nx; const p0y = s.ay + ny;
-    const p1x = s.bx + nx; const p1y = s.by + ny;
-    const p2x = s.bx - nx; const p2y = s.by - ny;
-    const p3x = s.ax - nx; const p3y = s.ay - ny;
-    positions[pi++] = p0x; positions[pi++] = p0y; positions[pi++] = 0;
-    positions[pi++] = p1x; positions[pi++] = p1y; positions[pi++] = 0;
-    positions[pi++] = p2x; positions[pi++] = p2y; positions[pi++] = 0;
-    positions[pi++] = p0x; positions[pi++] = p0y; positions[pi++] = 0;
-    positions[pi++] = p2x; positions[pi++] = p2y; positions[pi++] = 0;
-    positions[pi++] = p3x; positions[pi++] = p3y; positions[pi++] = 0;
+    const [p0, p1, p2, p3] = quadCorners(s.ax, s.ay, s.bx, s.by, halfWidth);
+    positions[pi++] = p0.x; positions[pi++] = p0.y; positions[pi++] = 0;
+    positions[pi++] = p1.x; positions[pi++] = p1.y; positions[pi++] = 0;
+    positions[pi++] = p2.x; positions[pi++] = p2.y; positions[pi++] = 0;
+    positions[pi++] = p0.x; positions[pi++] = p0.y; positions[pi++] = 0;
+    positions[pi++] = p2.x; positions[pi++] = p2.y; positions[pi++] = 0;
+    positions[pi++] = p3.x; positions[pi++] = p3.y; positions[pi++] = 0;
   }
   return positions;
+}
+
+function buildSingleQuad(ax, ay, bx, by, halfWidth) {
+  const [p0, p1, p2, p3] = quadCorners(ax, ay, bx, by, halfWidth);
+  return new Float32Array([
+    p0.x, p0.y, 0, p1.x, p1.y, 0, p2.x, p2.y, 0,
+    p0.x, p0.y, 0, p2.x, p2.y, 0, p3.x, p3.y, 0,
+  ]);
 }
 
 function refreshSegmentMesh() {
@@ -1061,6 +1111,7 @@ updateUndoRedoButtons();
 // "zoom out" click advances to the next failure for the following "zoom in"
 // click, so alternating clicks step through all of them
 const FIT_ALL_FRAME_FRACTION = 0.85;
+const FAILURE_FRAME_FRACTION = 1 / 1.2; // bounding box + 20% margin
 hypothesisSymbolEl.addEventListener('click', () => {
   if (hypothesisZoomedIn) {
     zoomToRegion(userInputBoundingPoints(), 1500, FIT_ALL_FRAME_FRACTION);
@@ -1075,12 +1126,14 @@ hypothesisSymbolEl.addEventListener('click', () => {
   // triangulation), so framing it tightly can end up *less* zoomed in than
   // the fit-all overview would be - never let "zoom in" be more zoomed out
   // than "zoom out" would be
-  const failureFraming = computeRegionFraming([failure.A, failure.B], 0.3);
+  const failureFraming = computeRegionFraming([failure.A, failure.B], FAILURE_FRAME_FRACTION);
   const fitAllFraming = computeRegionFraming(userInputBoundingPoints(), FIT_ALL_FRAME_FRACTION);
   if (failureFraming) {
     const targetZoom =
       fitAllFraming ? Math.max(failureFraming.targetZoom, fitAllFraming.targetZoom) : failureFraming.targetZoom;
-    animateCameraTo(failureFraming.targetCenter, targetZoom, 1500);
+    animateCameraTo(failureFraming.targetCenter, targetZoom, 1500, () => {
+      pulseSubedgeHighlight(failure.A, failure.B, 700);
+    });
   }
   hypothesisZoomedIn = true;
 });
