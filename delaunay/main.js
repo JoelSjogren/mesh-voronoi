@@ -85,8 +85,8 @@ function setViewCenterForAnchor(sx, sy, anchor) {
 
 // Smoothly animates the camera so that world point `focus` ends up rendered
 // at screen pixel `screenAnchor`, at `targetZoom`, over durationMs, easing in
-// (accelerating) via a cubic curve. zoom is interpolated in log-space so the
-// perceived zoom speed stays constant rather than slowing down near the end.
+// (accelerating) via a quadratic curve. zoom is interpolated in log-space so
+// the perceived zoom speed stays constant rather than slowing down near the end.
 //
 // Interpolating viewCenter (world space) and zoom independently would NOT
 // keep `focus` moving monotonically toward screenAnchor: screen-space offset
@@ -106,7 +106,10 @@ function animateCameraToFocus(focus, targetZoom, screenAnchor, durationMs, onCom
 
   function step(now) {
     const t = Math.min(1, (now - startTime) / durationMs);
-    const e = t * t * t; // ease-in: starts slow, accelerates
+    const e = t * t; // ease-in: starts slow, accelerates (milder than cubic - t^3
+    // is monotonic too, but so back-loaded that most of the motion crams into the
+    // last ~20% of the duration, which still reads as "nothing happens, then it
+    // violently snaps" even though it never reverses direction)
     zoom = Math.exp(startLogZoom + (targetLogZoom - startLogZoom) * e);
     const sx = startScreenPos.sx + (screenAnchor.sx - startScreenPos.sx) * e;
     const sy = startScreenPos.sy + (screenAnchor.sy - startScreenPos.sy) * e;
