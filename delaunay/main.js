@@ -247,6 +247,10 @@ const CIRCLE_OUTLINE_WIDTH_PX = 1.5;
 
 const heatmapGeom = new THREE.BufferGeometry();
 const heatmapMat = new THREE.ShaderMaterial({
+  // hint at highp (world coords can be large at extreme zoom); three.js still
+  // falls back to mediump itself on hardware that lacks fragment highp
+  // support, unlike hardcoding "precision highp float" in the GLSL source
+  precision: 'highp',
   uniforms: {
     uCircles: { value: Array.from({ length: HEATMAP_MAX_CIRCLES }, () => new THREE.Vector3()) },
     uCircleCount: { value: 0 },
@@ -266,18 +270,23 @@ const heatmapMat = new THREE.ShaderMaterial({
     uniform float uOutlineWidth;
     void main() {
       int count = 0;
-      float minEdgeDist = 1e20;
+      float minEdgeDist = 0.0;
+      bool haveEdgeDist = false;
       for (int i = 0; i < ${HEATMAP_MAX_CIRCLES}; i++) {
         if (i >= uCircleCount) break;
         vec2 c = uCircles[i].xy;
         float r = uCircles[i].z;
         float d = distance(vPos, c);
         if (d < r) count++;
-        minEdgeDist = min(minEdgeDist, abs(d - r));
+        float ed = abs(d - r);
+        if (!haveEdgeDist || ed < minEdgeDist) {
+          minEdgeDist = ed;
+          haveEdgeDist = true;
+        }
       }
       float heat = 1.0 - exp(-float(count) * 0.35);
       vec3 color = vec3(heat);
-      float outline = 1.0 - smoothstep(0.0, uOutlineWidth, minEdgeDist);
+      float outline = haveEdgeDist ? (1.0 - smoothstep(0.0, uOutlineWidth, minEdgeDist)) : 0.0;
       color = mix(color, vec3(1.0), outline);
       gl_FragColor = vec4(color, 1.0);
     }
