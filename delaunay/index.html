@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Delaunay Playground</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: sans-serif; color: #eee; }
+  #canvas-container { position: absolute; top: 0; left: 0; right: 260px; bottom: 0; cursor: crosshair; }
+  #panel { position: absolute; top: 0; right: 0; width: 260px; bottom: 0; background: #1b1b1b; border-left: 1px solid #333; padding: 16px; box-sizing: border-box; }
+  #panel h2 { font-size: 14px; margin: 0 0 12px; }
+  #panel label { display: block; font-size: 12px; margin: 12px 0 4px; color: #aaa; }
+  #panel input[type=number] { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; padding: 4px; }
+  #panel select { width: 100%; background: #222; color: #eee; border: 1px solid #444; padding: 4px; }
+  #panel button { width: 100%; padding: 8px; margin-top: 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; }
+  #panel button:hover { background: #444; }
+  #panel button:disabled { opacity: 0.4; cursor: default; }
+  #panel button:disabled:hover { background: #333; }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+  .row label { margin: 0; flex: 1; }
+  .button-row { display: flex; gap: 8px; }
+  .button-row button { margin-top: 0; }
+  .slider-row { margin-top: 14px; }
+  .slider-row .slider-label { display: flex; justify-content: space-between; font-size: 12px; color: #aaa; margin-bottom: 4px; }
+  .slider-row input[type=range] { width: 100%; }
+  #info { position: absolute; bottom: 8px; left: 8px; font-size: 11px; color: #666; }
+  #help { margin-top: 20px; font-size: 11px; color: #666; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="canvas-container"></div>
+<div id="panel">
+  <h2>Delaunay Playground</h2>
+  <div class="button-row">
+    <button id="undo" disabled>Undo</button>
+    <button id="redo" disabled>Redo</button>
+  </div>
+  <label for="count">Point count</label>
+  <input type="number" id="count" value="30" min="1" max="2000">
+  <label for="dist">Distribution</label>
+  <select id="dist">
+    <option value="uniform">Uniform</option>
+    <option value="gaussian">Gaussian</option>
+  </select>
+  <button id="randomize">Randomize points</button>
+  <div class="row">
+    <input type="checkbox" id="pause">
+    <label for="pause">Pause regeneration</label>
+  </div>
+  <div class="row">
+    <input type="checkbox" id="circumcircles">
+    <label for="circumcircles">Show circumcircles</label>
+  </div>
+  <div class="slider-row">
+    <div class="slider-label"><span>Intersection generations</span><span id="intersectionGensLabel">0</span></div>
+    <input type="range" id="intersectionGens" min="0" max="5" step="1" value="0">
+  </div>
+  <div id="help">
+    Click empty space: add point.<br>
+    Drag from empty space: add segment (its two endpoints are attached immediately).<br>
+    Click an empty part of a segment: attach another slider point there (a segment can hold any number of them).<br>
+    Drag an empty part of a segment: reshape the whole segment, keeping the grabbed point under the cursor.<br>
+    Drag a point: move it (slider points slide along their segment).<br>
+    Enter: copy last-moved slider point to a free point.<br>
+    Right-click a point: remove it (its segment stays).<br>
+    Right-click a segment: remove it and all its attached points.<br>
+    Right-click empty space: clear everything.<br>
+    Ctrl-drag anywhere: pan the view.<br>
+    Shift-drag anywhere: always adds a new segment, never moves existing points/segments.<br>
+    Scroll / trackpad pinch: zoom in and out, centered on the cursor.<br>
+    Intersection generations: each generation adds a (purple, non-editable) point everywhere a segment crosses a circumcircle, then retriangulates including those before the next generation - fully derived, so it stays live as you edit anything.<br>
+    Undo / Redo: step through every change, including clears, randomizes, and the slider above.
+  </div>
+</div>
+<div id="info"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://esm.sh/three@0.160.1",
+    "d3-delaunay": "https://esm.sh/d3-delaunay@6"
+  }
+}
+</script>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
