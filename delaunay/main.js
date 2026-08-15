@@ -123,11 +123,14 @@ function computeViewCenterForAnchor(sx, sy, anchor, forZoom) {
   };
 }
 
-// Animates the camera to frame a small region (e.g. a failing subedge) within
-// the actually-visible part of the canvas, leaving generous padding for
-// context.
-function zoomToRegion(pts, durationMs) {
-  if (pts.length === 0) return;
+// Computes the { targetCenter, targetZoom } that frames a region (e.g. a
+// failing subedge, or the whole scene) within the actually-visible part of
+// the canvas, leaving padding for context. frameFraction is how much of the
+// visible canvas the region's bounding box should occupy - small for
+// zooming tight to a single subedge, large for a "fit everything" overview.
+// Returns null for an empty region.
+function computeRegionFraming(pts, frameFraction) {
+  if (pts.length === 0) return null;
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -144,10 +147,9 @@ function zoomToRegion(pts, durationMs) {
   const visW = Math.max(1, visible.right - visible.left);
   const visH = Math.max(1, visible.bottom - visible.top);
 
-  const FRAME_FRACTION = 0.3; // the region occupies about this fraction of the visible canvas
   const targetZoom = Math.min(
     ZOOM_MAX,
-    Math.max(ZOOM_MIN, Math.min((visW * FRAME_FRACTION) / spanX, (visH * FRAME_FRACTION) / spanY)),
+    Math.max(ZOOM_MIN, Math.min((visW * frameFraction) / spanX, (visH * frameFraction) / spanY)),
   );
   const targetCenter = computeViewCenterForAnchor(
     (visible.left + visible.right) / 2,
@@ -155,7 +157,25 @@ function zoomToRegion(pts, durationMs) {
     regionCenter,
     targetZoom,
   );
-  animateCameraTo(targetCenter, targetZoom, durationMs);
+  return { targetCenter, targetZoom };
+}
+
+// Animates the camera to computeRegionFraming's result, if any.
+function zoomToRegion(pts, durationMs, frameFraction = 0.3) {
+  const framing = computeRegionFraming(pts, frameFraction);
+  if (framing) animateCameraTo(framing.targetCenter, framing.targetZoom, durationMs);
+}
+
+// Every point that's actual user input - real points (free + slider) plus
+// segment endpoints (covers a segment even if its endpoint sliders were
+// individually removed) - excluding derived/generated intersection points.
+function userInputBoundingPoints() {
+  const pts = points.map(pointPos);
+  for (const seg of segments) {
+    pts.push({ x: seg.ax, y: seg.ay });
+    pts.push({ x: seg.bx, y: seg.by });
+  }
+  return pts;
 }
 
 // ---------- circumcircle-containment heatmap (full-screen shader) ----------
@@ -512,7 +532,6 @@ let intersectionGenerations = 0;
 let lastHypothesisFailures = []; // [{ A: {x,y}, B: {x,y} }, ...], refreshed each update()
 let hypothesisFailureIndex = 0; // which failure the next "zoom in" click targets
 let hypothesisZoomedIn = false; // toggles zoom-in/zoom-out on alternating clicks
-let preZoomCameraState = null; // { center, zoom } to restore on "zoom out"
 
 function circumcenter(ax, ay, bx, by, cx, cy) {
   const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
@@ -1037,21 +1056,32 @@ undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
 updateUndoRedoButtons();
 
-// clicking the ✗ toggles between zooming to a failing subedge and zooming
-// back out to wherever the view was before; each "zoom out" click advances
-// to the next failure for the following "zoom in" click, so alternating
-// clicks step through all of them
+// clicking the ✗ toggles between zooming tight to a failing subedge and
+// zooming back out to fit all user input (not the previous view); each
+// "zoom out" click advances to the next failure for the following "zoom in"
+// click, so alternating clicks step through all of them
+const FIT_ALL_FRAME_FRACTION = 0.85;
 hypothesisSymbolEl.addEventListener('click', () => {
   if (hypothesisZoomedIn) {
-    if (preZoomCameraState) animateCameraTo(preZoomCameraState.center, preZoomCameraState.zoom, 1500);
+    zoomToRegion(userInputBoundingPoints(), 1500, FIT_ALL_FRAME_FRACTION);
     hypothesisFailureIndex += 1;
     hypothesisZoomedIn = false;
     return;
   }
   if (lastHypothesisFailures.length === 0) return;
-  preZoomCameraState = { center: { x: viewCenter.x, y: viewCenter.y }, zoom };
   const failure = lastHypothesisFailures[hypothesisFailureIndex % lastHypothesisFailures.length];
-  zoomToRegion([failure.A, failure.B], 1500);
+  // a failing subedge is often relatively long (a long direct hop between
+  // distant points is exactly what's more likely to get "cut" by the
+  // triangulation), so framing it tightly can end up *less* zoomed in than
+  // the fit-all overview would be - never let "zoom in" be more zoomed out
+  // than "zoom out" would be
+  const failureFraming = computeRegionFraming([failure.A, failure.B], 0.3);
+  const fitAllFraming = computeRegionFraming(userInputBoundingPoints(), FIT_ALL_FRAME_FRACTION);
+  if (failureFraming) {
+    const targetZoom =
+      fitAllFraming ? Math.max(failureFraming.targetZoom, fitAllFraming.targetZoom) : failureFraming.targetZoom;
+    animateCameraTo(failureFraming.targetCenter, targetZoom, 1500);
+  }
   hypothesisZoomedIn = true;
 });
 
