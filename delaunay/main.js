@@ -99,8 +99,33 @@ function animateCameraTo(targetCenter, targetZoom, durationMs) {
   cameraAnimId = requestAnimationFrame(step);
 }
 
-// Animates the camera to frame a small region (e.g. a failing subedge),
-// leaving generous padding around it for context.
+// On mobile the control panel overlays the canvas without shrinking it
+// (#canvas-container stays full-width so it's full-screen when the panel is
+// closed), so the panel can cover part of the canvas without `width`
+// reflecting that. On desktop #canvas-container is already sized to exclude
+// the panel, so panelRect.left already sits at `width` there and this is a
+// no-op. Works for both cases uniformly, and for the panel being closed
+// (off-screen) too.
+function getVisibleCanvasRect() {
+  const panelRect = panel.getBoundingClientRect();
+  return { left: 0, top: 0, right: Math.min(width, panelRect.left), bottom: height };
+}
+
+// Like setViewCenterForAnchor, but as a pure function against an arbitrary
+// zoom instead of mutating the current one - needed to compute a *target*
+// viewCenter before an animation has actually reached that zoom yet.
+function computeViewCenterForAnchor(sx, sy, anchor, forZoom) {
+  const halfW = width / 2 / forZoom;
+  const halfH = height / 2 / forZoom;
+  return {
+    x: anchor.x - (sx / width - 0.5) * 2 * halfW,
+    y: anchor.y - (sy / height - 0.5) * 2 * halfH,
+  };
+}
+
+// Animates the camera to frame a small region (e.g. a failing subedge) within
+// the actually-visible part of the canvas, leaving generous padding for
+// context.
 function zoomToRegion(pts, durationMs) {
   if (pts.length === 0) return;
   let minX = Infinity;
@@ -111,13 +136,24 @@ function zoomToRegion(pts, durationMs) {
     minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
     minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
   }
-  const targetCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  const regionCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
   const spanX = Math.max(maxX - minX, 20);
   const spanY = Math.max(maxY - minY, 20);
-  const FRAME_FRACTION = 0.3; // the region occupies about this fraction of the viewport
+
+  const visible = getVisibleCanvasRect();
+  const visW = Math.max(1, visible.right - visible.left);
+  const visH = Math.max(1, visible.bottom - visible.top);
+
+  const FRAME_FRACTION = 0.3; // the region occupies about this fraction of the visible canvas
   const targetZoom = Math.min(
     ZOOM_MAX,
-    Math.max(ZOOM_MIN, Math.min((width * FRAME_FRACTION) / spanX, (height * FRAME_FRACTION) / spanY)),
+    Math.max(ZOOM_MIN, Math.min((visW * FRAME_FRACTION) / spanX, (visH * FRAME_FRACTION) / spanY)),
+  );
+  const targetCenter = computeViewCenterForAnchor(
+    (visible.left + visible.right) / 2,
+    (visible.top + visible.bottom) / 2,
+    regionCenter,
+    targetZoom,
   );
   animateCameraTo(targetCenter, targetZoom, durationMs);
 }
