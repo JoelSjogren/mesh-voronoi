@@ -66,6 +66,14 @@ function pixelToWorld(sx, sy) {
   };
 }
 
+// Inverse of pixelToWorld: where does world point `pt` currently render?
+function worldToScreen(pt) {
+  return {
+    sx: ((pt.x - camera.left) / (camera.right - camera.left)) * width,
+    sy: ((pt.y - camera.top) / (camera.bottom - camera.top)) * height,
+  };
+}
+
 // Sets viewCenter so that world point `anchor` renders at screen pixel (sx, sy).
 // Used for zoom-to-cursor and for right-drag panning (keep the grabbed point under the cursor).
 function setViewCenterForAnchor(sx, sy, anchor) {
@@ -75,13 +83,23 @@ function setViewCenterForAnchor(sx, sy, anchor) {
   viewCenter.y = anchor.y - (sy / height - 0.5) * 2 * halfH;
 }
 
-// Smoothly animates viewCenter/zoom to a target over durationMs, easing in
+// Smoothly animates the camera so that world point `focus` ends up rendered
+// at screen pixel `screenAnchor`, at `targetZoom`, over durationMs, easing in
 // (accelerating) via a cubic curve. zoom is interpolated in log-space so the
 // perceived zoom speed stays constant rather than slowing down near the end.
+//
+// Interpolating viewCenter (world space) and zoom independently would NOT
+// keep `focus` moving monotonically toward screenAnchor: screen-space offset
+// of a fixed world point is (world gap) * zoom, and with an ease-in curve
+// zoom can race ahead of the world-space pan early on, so the offset
+// actually grows for a while before snapping in at the end. Instead this
+// interpolates `focus`'s own SCREEN position directly (its current position
+// at the current interpolated zoom) and solves for viewCenter each frame -
+// guaranteeing monotonic on-screen motion regardless of how zoom changes.
 let cameraAnimId = null;
-function animateCameraTo(targetCenter, targetZoom, durationMs, onComplete) {
+function animateCameraToFocus(focus, targetZoom, screenAnchor, durationMs, onComplete) {
   if (cameraAnimId != null) cancelAnimationFrame(cameraAnimId);
-  const startCenter = { x: viewCenter.x, y: viewCenter.y };
+  const startScreenPos = worldToScreen(focus);
   const startLogZoom = Math.log(zoom);
   const targetLogZoom = Math.log(targetZoom);
   const startTime = performance.now();
@@ -89,9 +107,12 @@ function animateCameraTo(targetCenter, targetZoom, durationMs, onComplete) {
   function step(now) {
     const t = Math.min(1, (now - startTime) / durationMs);
     const e = t * t * t; // ease-in: starts slow, accelerates
-    viewCenter.x = startCenter.x + (targetCenter.x - startCenter.x) * e;
-    viewCenter.y = startCenter.y + (targetCenter.y - startCenter.y) * e;
     zoom = Math.exp(startLogZoom + (targetLogZoom - startLogZoom) * e);
+    const sx = startScreenPos.sx + (screenAnchor.sx - startScreenPos.sx) * e;
+    const sy = startScreenPos.sy + (screenAnchor.sy - startScreenPos.sy) * e;
+    const vc = computeViewCenterForAnchor(sx, sy, focus, zoom);
+    viewCenter.x = vc.x;
+    viewCenter.y = vc.y;
     updateCameraFrustum();
     refreshSegmentMesh();
     if (t < 1) {
@@ -128,12 +149,13 @@ function computeViewCenterForAnchor(sx, sy, anchor, forZoom) {
   };
 }
 
-// Computes the { targetCenter, targetZoom } that frames a region (e.g. a
-// failing subedge, or the whole scene) within the actually-visible part of
-// the canvas, leaving padding for context. frameFraction is how much of the
-// visible canvas the region's bounding box should occupy - small for
-// zooming tight to a single subedge, large for a "fit everything" overview.
-// Returns null for an empty region.
+// Computes the { regionCenter, targetZoom, screenAnchor } that frames a
+// region (e.g. a failing subedge, or the whole scene) within the
+// actually-visible part of the canvas, leaving padding for context.
+// frameFraction is how much of the visible canvas the region's bounding box
+// should occupy - small for zooming tight to a single subedge, large for a
+// "fit everything" overview. Returns null for an empty region. Feed the
+// result to animateCameraToFocus(regionCenter, targetZoom, screenAnchor, ...).
 function computeRegionFraming(pts, frameFraction) {
   if (pts.length === 0) return null;
   let minX = Infinity;
@@ -156,19 +178,14 @@ function computeRegionFraming(pts, frameFraction) {
     ZOOM_MAX,
     Math.max(ZOOM_MIN, Math.min((visW * frameFraction) / spanX, (visH * frameFraction) / spanY)),
   );
-  const targetCenter = computeViewCenterForAnchor(
-    (visible.left + visible.right) / 2,
-    (visible.top + visible.bottom) / 2,
-    regionCenter,
-    targetZoom,
-  );
-  return { targetCenter, targetZoom };
+  const screenAnchor = { sx: (visible.left + visible.right) / 2, sy: (visible.top + visible.bottom) / 2 };
+  return { regionCenter, targetZoom, screenAnchor };
 }
 
 // Animates the camera to computeRegionFraming's result, if any.
 function zoomToRegion(pts, durationMs, frameFraction = 0.3) {
   const framing = computeRegionFraming(pts, frameFraction);
-  if (framing) animateCameraTo(framing.targetCenter, framing.targetZoom, durationMs);
+  if (framing) animateCameraToFocus(framing.regionCenter, framing.targetZoom, framing.screenAnchor, durationMs);
 }
 
 // Every point that's actual user input - real points (free + slider) plus
@@ -1131,7 +1148,7 @@ hypothesisSymbolEl.addEventListener('click', () => {
   if (failureFraming) {
     const targetZoom =
       fitAllFraming ? Math.max(failureFraming.targetZoom, fitAllFraming.targetZoom) : failureFraming.targetZoom;
-    animateCameraTo(failureFraming.targetCenter, targetZoom, 1500, () => {
+    animateCameraToFocus(failureFraming.regionCenter, targetZoom, failureFraming.screenAnchor, 1500, () => {
       pulseSubedgeHighlight(failure.A, failure.B, 700);
     });
   }
