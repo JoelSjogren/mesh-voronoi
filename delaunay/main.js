@@ -191,6 +191,39 @@ function zoomToRegion(pts, durationMs, frameFraction = 0.3) {
   if (framing) animateCameraToFocus(framing.regionCenter, framing.targetZoom, framing.screenAnchor, durationMs);
 }
 
+// Like computeRegionFraming, but keeps a FIXED focus point (instead of
+// re-centering on pts' own bounding-box centroid) and computes the zoom that
+// still fits every point in `pts` within frameFraction of the visible canvas
+// even though the view is off-center relative to pts' own centroid - by
+// sizing to the farthest point from `focus` in each axis, doubled, rather
+// than pts' own bounding-box span. Used so "zoom out" keeps tracking the
+// exact point that was just zoomed into (which is already sitting dead
+// center) instead of jumping to fit-all's own centroid, which is generally a
+// different point and would drag that original focus across the screen in a
+// non-monotonic path as an unintended side effect of the zoom/pan.
+function computeFramingCenteredOn(focus, pts, frameFraction) {
+  if (pts.length === 0) return null;
+  let maxDistX = 20;
+  let maxDistY = 20;
+  for (const p of pts) {
+    maxDistX = Math.max(maxDistX, Math.abs(p.x - focus.x));
+    maxDistY = Math.max(maxDistY, Math.abs(p.y - focus.y));
+  }
+  const spanX = maxDistX * 2;
+  const spanY = maxDistY * 2;
+
+  const visible = getVisibleCanvasRect();
+  const visW = Math.max(1, visible.right - visible.left);
+  const visH = Math.max(1, visible.bottom - visible.top);
+
+  const targetZoom = Math.min(
+    ZOOM_MAX,
+    Math.max(ZOOM_MIN, Math.min((visW * frameFraction) / spanX, (visH * frameFraction) / spanY)),
+  );
+  const screenAnchor = { sx: (visible.left + visible.right) / 2, sy: (visible.top + visible.bottom) / 2 };
+  return { regionCenter: focus, targetZoom, screenAnchor };
+}
+
 // Every point that's actual user input - real points (free + slider) plus
 // segment endpoints (covers a segment even if its endpoint sliders were
 // individually removed) - excluding derived/generated intersection points.
@@ -587,6 +620,7 @@ let intersectionGenerations = 0;
 let lastHypothesisFailures = []; // [{ A: {x,y}, B: {x,y} }, ...], refreshed each update()
 let hypothesisFailureIndex = 0; // which failure the next "zoom in" click targets
 let hypothesisZoomedIn = false; // toggles zoom-in/zoom-out on alternating clicks
+let lastZoomedFocus = null; // the exact point "zoom in" centered on, reused by "zoom out"
 
 function circumcenter(ax, ay, bx, by, cx, cy) {
   const d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
@@ -1134,7 +1168,17 @@ const FIT_ALL_FRAME_FRACTION = 0.85;
 const FAILURE_FRAME_FRACTION = 1 / 1.2; // bounding box + 20% margin
 hypothesisSymbolEl.addEventListener('click', () => {
   if (hypothesisZoomedIn) {
-    zoomToRegion(userInputBoundingPoints(), 1500, FIT_ALL_FRAME_FRACTION);
+    // keep tracking the exact same point "zoom in" just centered on (rather
+    // than re-centering on fit-all's own, generally different, centroid) -
+    // it's already sitting dead center, so this makes "zoom out" a pure
+    // scale-around-a-fixed-point: that point doesn't just move monotonically,
+    // it stays pinned at center the whole time, instead of getting dragged
+    // across the screen as an unintended side effect of re-centering on a
+    // different point
+    const framing = lastZoomedFocus
+      ? computeFramingCenteredOn(lastZoomedFocus, userInputBoundingPoints(), FIT_ALL_FRAME_FRACTION)
+      : computeRegionFraming(userInputBoundingPoints(), FIT_ALL_FRAME_FRACTION);
+    if (framing) animateCameraToFocus(framing.regionCenter, framing.targetZoom, framing.screenAnchor, 1500);
     hypothesisFailureIndex += 1;
     hypothesisZoomedIn = false;
     return;
@@ -1151,6 +1195,7 @@ hypothesisSymbolEl.addEventListener('click', () => {
   if (failureFraming) {
     const targetZoom =
       fitAllFraming ? Math.max(failureFraming.targetZoom, fitAllFraming.targetZoom) : failureFraming.targetZoom;
+    lastZoomedFocus = failureFraming.regionCenter;
     animateCameraToFocus(failureFraming.regionCenter, targetZoom, failureFraming.screenAnchor, 1500, () => {
       pulseSubedgeHighlight(failure.A, failure.B, 700);
     });
