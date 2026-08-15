@@ -1,5 +1,7 @@
 # MeshVoronoi
 
+**[Live demo: mesh delaunay prototyping →](https://joelsjogren.github.io/vibecoding/delaunay/)**
+
 A dimension-generic algorithm for **generalized Voronoi diagrams**: instead of
 partitioning space by nearest *point*, it partitions by nearest *feature* of
 an input simplicial complex (vertices, segments, and in general k-faces),
