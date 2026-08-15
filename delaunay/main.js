@@ -42,6 +42,10 @@ camera.position.z = 1;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(width, height);
+// without this, a sustained touch-drag on mobile gets taken over by the
+// browser's native scroll/pan gesture partway through, which cancels the
+// pointer stream (pointercancel) before pointerup ever fires
+renderer.domElement.style.touchAction = 'none';
 container.appendChild(renderer.domElement);
 
 function updateCameraFrustum() {
@@ -819,6 +823,14 @@ dom.addEventListener('pointerup', (e) => {
       update();
     }
   }
+  dragState = null;
+});
+
+// the OS/browser can still cancel a touch mid-gesture (an incoming system
+// gesture, a second finger landing, etc.) - drop the in-progress action
+// cleanly instead of leaving the preview line stuck or the drag half-applied
+dom.addEventListener('pointercancel', () => {
+  previewLine.visible = false;
   dragState = null;
 });
 
