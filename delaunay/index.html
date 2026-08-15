@@ -7,7 +7,7 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: sans-serif; color: #eee; }
   #canvas-container { position: absolute; top: 0; left: 0; right: 260px; bottom: 0; cursor: crosshair; touch-action: none; }
-  #panel { position: absolute; top: 0; right: 0; width: 260px; bottom: 0; background: #1b1b1b; border-left: 1px solid #333; padding: 16px; box-sizing: border-box; }
+  #panel { position: absolute; top: 0; right: 0; width: 260px; bottom: 0; background: #1b1b1b; border-left: 1px solid #333; padding: 16px; box-sizing: border-box; overflow-y: auto; }
   #panel h2 { font-size: 14px; margin: 0 0 12px; }
   #panel label { display: block; font-size: 12px; margin: 12px 0 4px; color: #aaa; }
   #panel input[type=number] { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; padding: 4px; }
@@ -23,12 +23,46 @@
   .slider-row { margin-top: 14px; }
   .slider-row .slider-label { display: flex; justify-content: space-between; font-size: 12px; color: #aaa; margin-bottom: 4px; }
   .slider-row input[type=range] { width: 100%; }
+  .hypothesis-row { margin-top: 6px; font-size: 12px; color: #aaa; }
+  #hypothesisSymbol { font-weight: bold; }
+  #hypothesisSymbol.ok { color: #4c8; }
+  #hypothesisSymbol.bad { color: #e55; }
   #info { position: absolute; bottom: 8px; left: 8px; font-size: 11px; color: #666; }
   #help { margin-top: 20px; font-size: 11px; color: #666; line-height: 1.5; }
+  #panelToggle { display: none; }
+
+  /* below this width the panel is a slide-in overlay (behind a toggle
+     button) instead of a fixed sidebar, so the canvas gets the full screen */
+  @media (max-width: 700px) {
+    #canvas-container { right: 0; }
+    #panel {
+      width: min(85vw, 320px);
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+      z-index: 10;
+      box-shadow: -4px 0 16px rgba(0, 0, 0, 0.5);
+    }
+    #panel.open { transform: translateX(0); }
+    #panelToggle {
+      display: block;
+      position: absolute;
+      top: 10px; right: 10px;
+      z-index: 20;
+      width: 40px; height: 40px;
+      padding: 0;
+      font-size: 18px;
+      line-height: 40px;
+      text-align: center;
+      cursor: pointer;
+      background: #333; color: #eee;
+      border: 1px solid #555; border-radius: 4px;
+    }
+  }
 </style>
 </head>
 <body>
 <div id="canvas-container"></div>
+<button id="panelToggle" aria-label="Toggle controls">☰</button>
 <div id="panel">
   <h2>Delaunay Playground</h2>
   <div class="button-row">
@@ -52,8 +86,14 @@
     <label for="circumcircles">Show circumcircles</label>
   </div>
   <div class="slider-row">
-    <div class="slider-label"><span>Intersection generations</span><span id="intersectionGensLabel">0</span></div>
+    <div class="slider-label">
+      <span>Intersection generations</span>
+      <span id="intersectionGensLabel">0</span>
+    </div>
     <input type="range" id="intersectionGens" min="0" max="5" step="1" value="0">
+    <div class="hypothesis-row" title="How many segment subedges (between consecutive attached points) are actual edges of the current Delaunay triangulation">
+      Hypothesis test: <span id="hypothesisFraction">0/0</span> <span id="hypothesisSymbol">?</span>
+    </div>
   </div>
   <div id="help">
     Click empty space: add point.<br>
@@ -69,6 +109,7 @@
     Shift-drag anywhere: always adds a new segment, never moves existing points/segments.<br>
     Scroll / trackpad pinch: zoom in and out, centered on the cursor.<br>
     Intersection generations: each generation adds a (purple, non-editable) point everywhere a segment crosses a circumcircle, then retriangulates including those before the next generation - fully derived, so it stays live as you edit anything.<br>
+    Hypothesis test: for each segment, walks its attached points in order and checks each consecutive pair against the Delaunay triangulation's actual edges - the fraction is how many of those subedges were found; ✓ only when every one was.<br>
     Undo / Redo: step through every change, including clears, randomizes, and the slider above.
   </div>
 </div>

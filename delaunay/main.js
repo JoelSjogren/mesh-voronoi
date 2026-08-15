@@ -414,7 +414,7 @@ function segmentCircleIntersections(seg, circle) {
   const ts = disc < 1e-9 ? [-b / (2 * a)] : [(-b - sqrtDisc) / (2 * a), (-b + sqrtDisc) / (2 * a)];
   const pts = [];
   for (const t of ts) {
-    if (t >= 0 && t <= 1) pts.push({ x: seg.ax + t * dx, y: seg.ay + t * dy });
+    if (t >= 0 && t <= 1) pts.push({ x: seg.ax + t * dx, y: seg.ay + t * dy, t });
   }
   return pts;
 }
@@ -466,7 +466,10 @@ function generateIntersectionPoints(basePositions, generations) {
     for (const seg of segments) {
       for (const circle of circles) {
         for (const pt of segmentCircleIntersections(seg, circle)) {
-          if (!isDuplicate(pt.x, pt.y)) newPts.push(pt);
+          // segId/t let the hypothesis test (checkSegmentsInDelaunay) treat
+          // these the same as a real attached point of this segment, even
+          // though they're not part of `points`
+          if (!isDuplicate(pt.x, pt.y)) newPts.push({ x: pt.x, y: pt.y, segId: seg.id, t: pt.t });
         }
       }
     }
@@ -484,6 +487,16 @@ let lastTriangleEdges = new Float32Array(0);
 let lastCirclePositions = new Float32Array(0);
 let lastCircles = []; // [{ cx, cy, r }, ...] one per Delaunay triangle
 let lastGeneratedPositions = []; // derived, non-editable intersection points
+let lastDelaunayEdgeKeys = new Set(); // canonical "x,y|x,y" key per triangulation edge
+
+// canonical, direction-independent edge key; fixed precision absorbs any
+// inconsequential floating-point noise between two computations of "the
+// same" point
+function edgeKey(ax, ay, bx, by) {
+  const a = `${ax.toFixed(6)},${ay.toFixed(6)}`;
+  const b = `${bx.toFixed(6)},${by.toFixed(6)}`;
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
 
 function recomputeDelaunay(basePositions, generated) {
   const pos = basePositions.concat(generated);
@@ -492,6 +505,7 @@ function recomputeDelaunay(basePositions, generated) {
     lastTriangleEdges = new Float32Array(0);
     lastCirclePositions = new Float32Array(0);
     lastCircles = [];
+    lastDelaunayEdgeKeys = new Set();
     return;
   }
 
@@ -502,6 +516,7 @@ function recomputeDelaunay(basePositions, generated) {
   const edgeArr = new Float32Array(tris.length * 2 * 3);
   const circleArr = new Float32Array(triCount * CIRCLE_SEGMENTS * 2 * 3);
   const circles = [];
+  const edgeKeys = new Set();
 
   let ei = 0;
   let cri = 0;
@@ -517,6 +532,10 @@ function recomputeDelaunay(basePositions, generated) {
     edgeArr[ei++] = C.x; edgeArr[ei++] = C.y; edgeArr[ei++] = 0;
     edgeArr[ei++] = C.x; edgeArr[ei++] = C.y; edgeArr[ei++] = 0;
     edgeArr[ei++] = A.x; edgeArr[ei++] = A.y; edgeArr[ei++] = 0;
+
+    edgeKeys.add(edgeKey(A.x, A.y, B.x, B.y));
+    edgeKeys.add(edgeKey(B.x, B.y, C.x, C.y));
+    edgeKeys.add(edgeKey(C.x, C.y, A.x, A.y));
 
     const cc = circumcenter(A.x, A.y, B.x, B.y, C.x, C.y);
     const [cx, cy] = cc || [(A.x + B.x + C.x) / 3, (A.y + B.y + C.y) / 3];
@@ -534,6 +553,39 @@ function recomputeDelaunay(basePositions, generated) {
   lastTriangleEdges = edgeArr;
   lastCirclePositions = circleArr;
   lastCircles = circles;
+  lastDelaunayEdgeKeys = edgeKeys;
+}
+
+// For every segment, walks its chain of attached points - real slider points
+// plus any generated intersection points tagged with this segment's id -
+// sorted along the segment, and checks each consecutive subedge against the
+// current Delaunay triangulation: whether enough points have been attached
+// that the segment is fully "honored" by the (unconstrained) triangulation,
+// not just crossed by it. Returns how many of the total subedges checked out
+// actually are real Delaunay edges (a segment with fewer than 2 chain points
+// has no subedges to check at all, so it contributes nothing to either
+// count). Note: if two segments happen to cross at the exact same generated
+// point, that point only gets tagged with whichever segment produced it
+// first (deduped globally by position) - a rare coincidence, not handled.
+function checkSegmentsInDelaunay() {
+  let passed = 0;
+  let total = 0;
+  for (const seg of segments) {
+    const sliderChain = points
+      .filter((p) => p.kind === 'slider' && p.segId === seg.id)
+      .map((p) => ({ t: p.t, pos: pointPos(p) }));
+    const generatedChain = lastGeneratedPositions
+      .filter((p) => p.segId === seg.id)
+      .map((p) => ({ t: p.t, pos: { x: p.x, y: p.y } }));
+    const chain = sliderChain.concat(generatedChain).sort((a, b) => a.t - b.t);
+    for (let i = 0; i < chain.length - 1; i++) {
+      total += 1;
+      const A = chain[i].pos;
+      const B = chain[i + 1].pos;
+      if (lastDelaunayEdgeKeys.has(edgeKey(A.x, A.y, B.x, B.y))) passed += 1;
+    }
+  }
+  return { passed, total };
 }
 
 // ---------- render sync ----------
@@ -584,6 +636,13 @@ function update() {
     intersectionGenerations > 0 ? generateIntersectionPoints(basePositions, intersectionGenerations) : [];
 
   if (!paused) recomputeDelaunay(basePositions, lastGeneratedPositions);
+  const { passed, total } = checkSegmentsInDelaunay();
+  const allOk = passed === total;
+  hypothesisFractionEl.textContent = `${passed}/${total}`;
+  hypothesisSymbolEl.textContent = allOk ? '✓' : '✗';
+  hypothesisSymbolEl.classList.toggle('ok', allOk);
+  hypothesisSymbolEl.classList.toggle('bad', !allOk);
+
   setPositionGeometry(triLines, lastTriangleEdges);
   setPositionGeometry(circleLines, showCircumcircles ? lastCirclePositions : new Float32Array(0));
   heatmapMesh.visible = showCircumcircles;
@@ -851,6 +910,8 @@ const pauseCheck = document.getElementById('pause');
 const circlesCheck = document.getElementById('circumcircles');
 const intersectionGensSlider = document.getElementById('intersectionGens');
 const intersectionGensLabel = document.getElementById('intersectionGensLabel');
+const hypothesisFractionEl = document.getElementById('hypothesisFraction');
+const hypothesisSymbolEl = document.getElementById('hypothesisSymbol');
 const undoBtn = document.getElementById('undo');
 const redoBtn = document.getElementById('redo');
 
@@ -882,6 +943,12 @@ intersectionGensSlider.addEventListener('input', () => {
 undoBtn.addEventListener('click', undo);
 redoBtn.addEventListener('click', redo);
 updateUndoRedoButtons();
+
+// on narrow screens the panel is a slide-in overlay, shown/hidden by this
+// button (only visible below that breakpoint - see the CSS media query)
+const panel = document.getElementById('panel');
+const panelToggle = document.getElementById('panelToggle');
+panelToggle.addEventListener('click', () => panel.classList.toggle('open'));
 
 // ---------- render loop ----------
 function animate() {
