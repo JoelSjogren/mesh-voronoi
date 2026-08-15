@@ -676,7 +676,7 @@ function generateIntersectionPoints(basePositions, generations) {
 }
 
 // ---------- delaunay computation ----------
-const CIRCLE_SEGMENTS = 48;
+const CIRCLE_SEGMENTS = 192; // 4x finer polygon approximation
 
 let lastTriangleEdges = new Float32Array(0);
 let lastCirclePositions = new Float32Array(0);
