@@ -26,7 +26,7 @@
   .hypothesis-row { margin-top: 6px; font-size: 12px; color: #aaa; }
   #hypothesisSymbol { font-weight: bold; }
   #hypothesisSymbol.ok { color: #4c8; }
-  #hypothesisSymbol.bad { color: #e55; }
+  #hypothesisSymbol.bad { color: #e55; cursor: pointer; }
   #info { position: absolute; bottom: 8px; left: 8px; font-size: 11px; color: #666; }
   #help { margin-top: 20px; font-size: 11px; color: #666; line-height: 1.5; }
   #panelToggle { display: none; }
@@ -109,7 +109,7 @@
     Shift-drag anywhere: always adds a new segment, never moves existing points/segments.<br>
     Scroll / trackpad pinch: zoom in and out, centered on the cursor.<br>
     Intersection generations: each generation adds a (purple, non-editable) point everywhere a segment crosses a circumcircle, then retriangulates including those before the next generation - fully derived, so it stays live as you edit anything.<br>
-    Hypothesis test: for each segment, walks its attached points in order and checks each consecutive pair against the Delaunay triangulation's actual edges - the fraction is how many of those subedges were found; ✓ only when every one was.<br>
+    Hypothesis test: for each segment, walks its attached points in order and checks each consecutive pair against the Delaunay triangulation's actual edges - the fraction is how many of those subedges were found; ✓ only when every one was. Click the ✗ to zoom to a failing subedge; click again to zoom back out and advance to the next one.<br>
     Undo / Redo: step through every change, including clears, randomizes, and the slider above.
   </div>
 </div>
@@ -125,6 +125,6 @@
 <!-- bump this query string whenever main.js changes, so mobile browsers
      (which cache aggressively and have no easy hard-reload gesture) can't
      silently keep serving a stale copy -->
-<script type="module" src="./main.js?v=1"></script>
+<script type="module" src="./main.js?v=2"></script>
 </body>
 </html>
