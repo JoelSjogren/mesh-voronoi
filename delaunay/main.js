@@ -31,8 +31,8 @@ let height = container.clientHeight;
 // Orthographic camera over a pan/zoom-able frustum, y increasing downward.
 // zoom=1 keeps the original 1:1 screen-pixel-to-world-unit mapping;
 // viewCenter is the world point shown at the center of the canvas.
-const ZOOM_MIN = 0.1;
-const ZOOM_MAX = 25;
+const ZOOM_MIN = 0.001;
+const ZOOM_MAX = 2500;
 let zoom = 1;
 let viewCenter = { x: width / 2, y: height / 2 };
 
@@ -118,6 +118,7 @@ function animateCameraToFocus(focus, targetZoom, screenAnchor, durationMs, onCom
     viewCenter.y = vc.y;
     updateCameraFrustum();
     refreshSegmentMesh();
+    refreshCircleOutlineWidth();
     if (t < 1) {
       cameraAnimId = requestAnimationFrame(step);
     } else {
@@ -239,11 +240,17 @@ function userInputBoundingPoints() {
 // ---------- circumcircle-containment heatmap (full-screen shader) ----------
 const HEATMAP_MAX_CIRCLES = 256;
 
+// per-pixel, so circle outlines are always exactly resolved regardless of
+// zoom - no polygon discretization to ever see, unlike a fixed-segment-count
+// LineSegments approximation
+const CIRCLE_OUTLINE_WIDTH_PX = 1.5;
+
 const heatmapGeom = new THREE.BufferGeometry();
 const heatmapMat = new THREE.ShaderMaterial({
   uniforms: {
     uCircles: { value: Array.from({ length: HEATMAP_MAX_CIRCLES }, () => new THREE.Vector3()) },
     uCircleCount: { value: 0 },
+    uOutlineWidth: { value: CIRCLE_OUTLINE_WIDTH_PX },
   },
   vertexShader: `
     varying vec2 vPos;
@@ -256,16 +263,23 @@ const heatmapMat = new THREE.ShaderMaterial({
     varying vec2 vPos;
     uniform vec3 uCircles[${HEATMAP_MAX_CIRCLES}];
     uniform int uCircleCount;
+    uniform float uOutlineWidth;
     void main() {
       int count = 0;
+      float minEdgeDist = 1e20;
       for (int i = 0; i < ${HEATMAP_MAX_CIRCLES}; i++) {
         if (i >= uCircleCount) break;
         vec2 c = uCircles[i].xy;
         float r = uCircles[i].z;
-        if (distance(vPos, c) < r) count++;
+        float d = distance(vPos, c);
+        if (d < r) count++;
+        minEdgeDist = min(minEdgeDist, abs(d - r));
       }
-      float v = 1.0 - exp(-float(count) * 0.35);
-      gl_FragColor = vec4(vec3(v), 1.0);
+      float heat = 1.0 - exp(-float(count) * 0.35);
+      vec3 color = vec3(heat);
+      float outline = 1.0 - smoothstep(0.0, uOutlineWidth, minEdgeDist);
+      color = mix(color, vec3(1.0), outline);
+      gl_FragColor = vec4(color, 1.0);
     }
   `,
   depthTest: false,
@@ -292,6 +306,11 @@ function updateHeatmapUniforms() {
     arr[i].set(lastCircles[i].cx, lastCircles[i].cy, lastCircles[i].r);
   }
   heatmapMat.uniforms.uCircleCount.value = n;
+  refreshCircleOutlineWidth();
+}
+
+function refreshCircleOutlineWidth() {
+  heatmapMat.uniforms.uOutlineWidth.value = CIRCLE_OUTLINE_WIDTH_PX / zoom;
 }
 
 window.addEventListener('resize', () => {
@@ -316,6 +335,7 @@ renderer.domElement.addEventListener(
     setViewCenterForAnchor(sx, sy, before);
     updateCameraFrustum();
     refreshSegmentMesh();
+    refreshCircleOutlineWidth();
   },
   { passive: false },
 );
@@ -328,13 +348,6 @@ const triMat = new THREE.LineBasicMaterial({ color: 0x3399ff, transparent: true,
 const triLines = new THREE.LineSegments(triGeom, triMat);
 triLines.renderOrder = 1;
 scene.add(triLines);
-
-// per-triangle circumcircle outline, drawn in plain white
-const circleGeom = new THREE.BufferGeometry();
-const circleMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthTest: false });
-const circleLines = new THREE.LineSegments(circleGeom, circleMat);
-circleLines.renderOrder = 2;
-scene.add(circleLines);
 
 // user-drawn segments, rendered as filled quads (not LineSegments) so they can
 // actually be made thicker than 1px - WebGL ignores LineBasicMaterial.linewidth
@@ -676,11 +689,9 @@ function generateIntersectionPoints(basePositions, generations) {
 }
 
 // ---------- delaunay computation ----------
-const CIRCLE_SEGMENTS = 48;
-
 let lastTriangleEdges = new Float32Array(0);
-let lastCirclePositions = new Float32Array(0);
-let lastCircles = []; // [{ cx, cy, r }, ...] one per Delaunay triangle
+let lastCircles = []; // [{ cx, cy, r }, ...] one per Delaunay triangle - rendered
+// as exact per-pixel outlines by the heatmap shader, not a discretized polygon
 let lastGeneratedPositions = []; // derived, non-editable intersection points
 let lastDelaunayEdgeKeys = new Set(); // canonical "x,y|x,y" key per triangulation edge
 
@@ -698,7 +709,6 @@ function recomputeDelaunay(basePositions, generated) {
 
   if (pos.length < 3) {
     lastTriangleEdges = new Float32Array(0);
-    lastCirclePositions = new Float32Array(0);
     lastCircles = [];
     lastDelaunayEdgeKeys = new Set();
     return;
@@ -706,15 +716,12 @@ function recomputeDelaunay(basePositions, generated) {
 
   const delaunay = Delaunay.from(pos, (d) => d.x, (d) => d.y);
   const tris = delaunay.triangles;
-  const triCount = tris.length / 3;
 
   const edgeArr = new Float32Array(tris.length * 2 * 3);
-  const circleArr = new Float32Array(triCount * CIRCLE_SEGMENTS * 2 * 3);
   const circles = [];
   const edgeKeys = new Set();
 
   let ei = 0;
-  let cri = 0;
 
   for (let t = 0; t < tris.length; t += 3) {
     const A = pos[tris[t]];
@@ -736,17 +743,9 @@ function recomputeDelaunay(basePositions, generated) {
     const [cx, cy] = cc || [(A.x + B.x + C.x) / 3, (A.y + B.y + C.y) / 3];
     const r = Math.hypot(A.x - cx, A.y - cy);
     circles.push({ cx, cy, r });
-
-    for (let s = 0; s < CIRCLE_SEGMENTS; s++) {
-      const a0 = (s / CIRCLE_SEGMENTS) * Math.PI * 2;
-      const a1 = ((s + 1) / CIRCLE_SEGMENTS) * Math.PI * 2;
-      circleArr[cri++] = cx + Math.cos(a0) * r; circleArr[cri++] = cy + Math.sin(a0) * r; circleArr[cri++] = 0;
-      circleArr[cri++] = cx + Math.cos(a1) * r; circleArr[cri++] = cy + Math.sin(a1) * r; circleArr[cri++] = 0;
-    }
   }
 
   lastTriangleEdges = edgeArr;
-  lastCirclePositions = circleArr;
   lastCircles = circles;
   lastDelaunayEdgeKeys = edgeKeys;
 }
@@ -860,7 +859,6 @@ function update() {
   hypothesisSymbolEl.classList.toggle('bad', !allOk);
 
   setPositionGeometry(triLines, lastTriangleEdges);
-  setPositionGeometry(circleLines, showCircumcircles ? lastCirclePositions : new Float32Array(0));
   heatmapMesh.visible = showCircumcircles;
   updateHeatmapUniforms();
 
