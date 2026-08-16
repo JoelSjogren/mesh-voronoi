@@ -12,6 +12,7 @@
   #panel label { display: block; font-size: 12px; margin: 12px 0 4px; color: #aaa; }
   #panel input[type=number] { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; padding: 4px; }
   #panel select { width: 100%; background: #222; color: #eee; border: 1px solid #444; padding: 4px; }
+  #panel textarea { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #444; padding: 4px; font-family: monospace; font-size: 10px; resize: vertical; }
   #panel button { width: 100%; padding: 8px; margin-top: 8px; cursor: pointer; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; }
   #panel button:hover { background: #444; }
   #panel button:disabled { opacity: 0.4; cursor: default; }
@@ -91,8 +92,22 @@
       <span id="intersectionGensLabel">0</span>
     </div>
     <input type="range" id="intersectionGens" min="0" max="5" step="1" value="0">
+    <label for="intersectionType">Intersection type</label>
+    <select id="intersectionType">
+      <option value="simple">Simple</option>
+      <option value="firstOrder">First order</option>
+      <option value="secondOrder">Second order</option>
+    </select>
     <div class="hypothesis-row" title="How many segment subedges (between consecutive attached points) are actual edges of the current Delaunay triangulation">
       Hypothesis test: <span id="hypothesisFraction">0/0</span> <span id="hypothesisSymbol">?</span>
+    </div>
+  </div>
+  <div class="slider-row">
+    <label for="configText">Share config (JSON)</label>
+    <textarea id="configText" rows="4" spellcheck="false"></textarea>
+    <div class="button-row" style="margin-top: 6px;">
+      <button id="saveConfig">Save</button>
+      <button id="loadConfig">Load</button>
     </div>
   </div>
   <div id="help">
@@ -109,8 +124,10 @@
     Shift-drag anywhere: always adds a new segment, never moves existing points/segments.<br>
     Scroll / trackpad pinch: zoom in and out, centered on the cursor.<br>
     Intersection generations: each generation adds a (purple, non-editable) point everywhere a segment crosses a circumcircle, then retriangulates including those before the next generation - fully derived, so it stays live as you edit anything.<br>
+    Intersection type - Simple: circles come from the full current triangulation (real + already-generated points), retriangulated fresh each generation. First order: circles come only from the free-point cloud's own triangulation (never other segments' points, never regenerated) - this is the actual "as a point slides from one segment endpoint to the other, the triangulation changes at these crossings" construction; each segment is checked independently, so it's a one-shot computation (the slider's exact value beyond 1 doesn't matter). Second order: segment-segment interaction - for each first-order point, actually inserts it into the free-point cloud, keeps only the genuinely new triangles that insertion creates (discarding the degenerate leftover that shares the point's own origin circle), and checks every *other* segment against those; also includes the direct crossing point wherever two input segments physically cross, attached to both; also one-shot.<br>
     Hypothesis test: for each segment, walks its attached points in order and checks each consecutive pair against the Delaunay triangulation's actual edges - the fraction is how many of those subedges were found; ✓ only when every one was. Click the ✗ to zoom to a failing subedge (it pulses red once you arrive); click again to zoom back out to fit everything and advance to the next one.<br>
-    Undo / Redo: step through every change, including clears, randomizes, and the slider above.
+    Undo / Redo: step through every change, including clears, randomizes, and the slider above.<br>
+    Share config: Save fills the box with the current points/segments/view/settings as JSON (and tries to copy it to your clipboard) - paste that text to someone else, or into a chat with Claude as debug material. Load reads whatever JSON is currently in the box and replaces the scene with it.
   </div>
 </div>
 <div id="info"></div>
@@ -125,6 +142,6 @@
 <!-- bump this query string whenever main.js changes, so mobile browsers
      (which cache aggressively and have no easy hard-reload gesture) can't
      silently keep serving a stale copy -->
-<script type="module" src="./main.js?v=12"></script>
+<script type="module" src="./main.js?v=13"></script>
 </body>
 </html>
